@@ -1,0 +1,254 @@
+diff --git a/main_window.py b/main_window.py
+index 1b46ea8cbd78fb46078d4588c4e4dbc48ed0507d..9a3bf7939b282f142bcab5fe5e5a9d93c682fdea 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -81,50 +81,52 @@ REGISTRY_ABBREVIATIONS = {
+     "transaminasa glutamico oxalacetica (tgo)": "TGO",
+     "transaminasa glutamico piruvico (tgp)": "TGP",
+     "tgo": "TGO",
+     "tgp": "TGP",
+     "bilirrubina total": "BilT",
+     "bilirrubina directa": "BilD",
+     "urea": "Urea",
+     "creatinina": "Crea",
+     "proteina de 24 horas": "Prot24h",
+     "fosfatasa alcalina": "FosfAlc",
+     "acido urico": "AcUr",
+     "proteinas totales": "ProtTot",
+     "albumina": "Alb",
+     "amilasa": "Amil",
+     "lipasa": "Lip",
+     "gamma glutamil transferasa (ggt)": "GGT",
+     "ggt": "GGT",
+     "globulina": "Glob",
+     "ferritina": "Ferr",
+     "hemoglobina glicosilada": "HbA1c",
+     "factor reumatoideo": "FR",
+     "proteina c reactiva": "PCR",
+     "resultado": "Res",
+     "interpretacion": "Interp",
+     "hora de toma/envio": "Hora toma",
++    "fecha de toma": "F. toma",
++    "fecha_toma": "F. toma",
+     "destino / referencia": "Destino",
+     "destino": "Destino",
+     "observaciones (laboratorio)": "Obs",
+     "observaciones adicionales": "Obs",
+     "eritrocitos": "RBC",
+     "eritrocitos totales": "RBC",
+     "leucocitos/c": "Leu/c",
+     "hematies/c": "Hto/c",
+     "ph": "pH",
+     "ph vaginal": "pH",
+     "color": "Color",
+     "aspecto": "Aspecto",
+     "olor": "Olor",
+     "densidad": "Dens",
+     "protein as": "Prot",
+     "proteinas": "Prot",
+     "nitritos": "Nit",
+     "glucosa (quimico)": "Glu",
+     "cetonas": "Cet",
+     "urobilinogeno": "Urob",
+     "bilirrubina": "Bil",
+     "leucocitos quimico": "Leu",
+     "leucocitos/campo": "Leu/c",
+     "celulas epiteliales/c": "Cel epi",
+     "cilindros/c": "Cil",
+@@ -485,51 +487,51 @@ EXAMEN_HONGOS_FIELDS = [
+ 
+ CONTENIDO_GASTRICO_FIELDS = [
+     {"key": "volumen", "label": "Volumen residual", "unit": "mL", "reference": "<20 mL", "placeholder": "Ej. 12"},
+     {"key": "ph", "label": "pH", "reference": "1.0-4.0", "placeholder": "Ej. 2.5"},
+     {"key": "aspecto", "label": "Aspecto", "reference": "Translúcido o ligeramente verdoso", "optional": True},
+     {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True}
+ ]
+ 
+ GRUPO_RH_FIELDS = [
+     {"key": "grupo_abo", "label": "Grupo ABO", "type": "choice", "choices": ["O", "A", "B", "AB"], "reference": "Reportar fenotipo ABO"},
+     {"key": "factor_rh", "label": "Factor Rh", "type": "choice", "choices": ["Positivo", "Negativo"], "reference": "Factor Rh(D)"},
+     {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True}
+ ]
+ 
+ WIDAL_FIELDS = [
+     {"key": "antigeno_o", "label": "Antígeno O", "reference": "Negativo: <1:80"},
+     {"key": "antigeno_h", "label": "Antígeno H", "reference": "Negativo: <1:160"},
+     {"key": "antigeno_ah", "label": "Antígeno AH", "reference": "Negativo: <1:80", "optional": True},
+     {"key": "antigeno_bh", "label": "Antígeno BH", "reference": "Negativo: <1:80", "optional": True},
+     {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True}
+ ]
+ 
+ def build_sample_tracking_template(reference_note):
+     return {
+         "fields": [
+-            {"key": "hora_toma", "label": "Hora de toma/envío", "placeholder": "HH:MM", "reference": "Registrar hora oficial de la toma"},
++            {"key": "fecha_toma", "label": "Fecha de toma", "placeholder": "DD/MM/AAAA", "reference": "Coincide con el registro de 'F. muestra'"},
+             {"key": "destino", "label": "Destino / referencia", "optional": True, "placeholder": "Ej. Laboratorio de referencia"},
+             {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True, "reference": reference_note}
+         ]
+     }
+ 
+ TEST_TEMPLATES = {
+     "Hemograma manual": {
+         "fields": copy.deepcopy(HEMOGRAM_BASE_FIELDS),
+         "auto_calculations": [
+             {
+                 "source": "hematocrito",
+                 "target": "hemoglobina",
+                 "operation": "divide",
+                 "operand": 3.03,
+                 "decimals": 2,
+                 "description": "Hb = Hto / 3.03 (cálculo automático)",
+             }
+         ]
+     },
+     "Hemograma automatizado": {
+         "fields": copy.deepcopy(HEMOGRAM_BASE_FIELDS),
+         "auto_calculations": [
+             {
+                 "source": "hematocrito",
+                 "target": "hemoglobina",
+@@ -2481,128 +2483,143 @@ class MainWindow(QMainWindow):
+             return
+         reply = QMessageBox.question(
+             self,
+             "Quitar examen",
+             f"¿Desea quitar la prueba '{test_name}' de la orden seleccionada?",
+             QMessageBox.Yes | QMessageBox.No
+         )
+         if reply == QMessageBox.No:
+             return
+         removed = self.labdb.remove_test_from_order(self.selected_order_id, test_name)
+         if removed:
+             QMessageBox.information(self, "Prueba eliminada", f"Se quitó '{test_name}' de la orden.")
+             self.populate_pending_orders()
+             self.populate_completed_orders()
+             self.load_order_fields()
+         else:
+             QMessageBox.warning(self, "Acción no realizada", "No se pudo quitar la prueba seleccionada.")
+ 
+     def save_results(self):
+         # Guardar los resultados ingresados para la orden seleccionada
+         if not self.selected_order_id:
+             return
+         results_payload = {}
+         has_empty = False
+         pending_samples = 0
++        pending_tests = []
+         missing_notes = []
+         for test_name, info in self.order_fields.items():
+             template = info.get("template")
+             meta = info.get("meta", {})
+             status_combo = meta.get("status_widget")
+             issue_widget = meta.get("issue_widget")
+             observation_widget = meta.get("observation_widget")
+             status_value = "recibida"
+             if status_combo:
+                 status_data = status_combo.currentData()
+                 if status_data:
+                     status_value = str(status_data).strip().lower()
+                 else:
+                     status_value = status_combo.currentText().strip().lower() or "recibida"
+             issue_value = issue_widget.text().strip() if issue_widget else ""
+             observation_value = observation_widget.toPlainText().strip() if observation_widget else ""
+             if status_value == "pendiente":
+                 pending_samples += 1
++                pending_tests.append(test_name)
+             if status_value == "recibida":
+                 issue_value = ""
+             if status_value in {"pendiente", "rechazada"} and not issue_value:
+                 missing_notes.append(test_name)
+             if template:
+                 values = {}
+                 for key, field_info in info["fields"].items():
+                     value = self._get_widget_value(field_info)
+                     values[key] = value
+                     if status_value == "recibida" and value == "" and not field_info["definition"].get("optional", False):
+                         has_empty = True
+                 result_value = {
+                     "type": "structured",
+                     "template": info.get("template_name", test_name),
+                     "values": values
+                 }
+             else:
+                 field_info = info["fields"].get("__value__")
+                 value = self._get_widget_value(field_info)
+                 if status_value == "recibida" and value == "":
+                     has_empty = True
+                 result_value = value
+             results_payload[test_name] = {
+                 "result": result_value,
+                 "sample_status": status_value,
+                 "sample_issue": issue_value,
+                 "observation": observation_value
+             }
+         if missing_notes:
+             detalle = ", ".join(missing_notes)
+             QMessageBox.warning(
+                 self,
+                 "Motivo requerido",
+                 f"Indique el motivo o detalle para las muestras marcadas como pendientes/rechazadas: {detalle}"
+             )
+             return
+         if has_empty:
+             reply = QMessageBox.question(
+                 self,
+                 "Confirmar",
+                 "Hay pruebas o campos sin resultado. ¿Guardar de todos modos?",
+                 QMessageBox.Yes | QMessageBox.No
+             )
+             if reply == QMessageBox.No:
+                 return
+         completed = self.labdb.save_results(self.selected_order_id, results_payload)
++        followup_order_id = None
++        if pending_tests:
++            followup_order_id = self.labdb.ensure_followup_order_for_pending(
++                self.selected_order_id,
++                pending_tests,
++                self.user.get('id')
++            )
++            if followup_order_id:
++                self.populate_pending_orders()
++                if self.selected_order_id:
++                    self._select_order_in_combo(self.combo_orders, self.selected_order_id)
+         if completed:
+             QMessageBox.information(self, "Completado", "Resultados guardados. Orden marcada como completada.")
+             self.selected_order_id = None
+             self.populate_pending_orders()
+             self._clear_results_layout()
+             msg = QLabel("Seleccione otra orden pendiente para continuar con la digitación de resultados.")
+             msg.setStyleSheet("color: #555; font-style: italic;")
+             msg.setWordWrap(True)
+             self.results_layout.addWidget(msg)
+             self.results_layout.addStretch()
+         else:
+             message = "Resultados guardados (orden aún incompleta)."
+             if pending_samples:
+                 message += "\nHay muestras pendientes o rechazadas registradas."
++            if followup_order_id:
++                message += f"\nSe generó la orden #{followup_order_id} para el seguimiento de las pruebas pendientes."
+             QMessageBox.information(self, "Guardado", message)
+             self.load_order_fields()
+ 
+     def _clear_results_layout(self):
+         if not hasattr(self, 'results_layout'):
+             return
+         self.current_order_context = None
+         while self.results_layout.count():
+             item = self.results_layout.takeAt(0)
+             widget = item.widget()
+             if widget:
+                 widget.deleteLater()
+         if hasattr(self, 'results_add_tests_btn'):
+             self.results_add_tests_btn.setEnabled(False)
+     def _create_structured_field(self, field_def, existing_values, context=None):
+         key = field_def.get("key")
+         value = ""
+         if key:
+             value = existing_values.get(key, "")
+         container = QWidget()
+         layout = QHBoxLayout(container)
+         layout.setContentsMargins(0, 0, 0, 0)
+         layout.setSpacing(6)
+         widget_info = {"key": key, "container": container}
+         field_type = field_def.get("type", "text")

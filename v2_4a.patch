@@ -1,0 +1,327 @@
+diff --git a/main_window.py b/main_window.py
+index 21cdf54f7281debda9d87bd5d6fbeb6c5018a063..1799fd6da8f2c74109b0330d2ea8b6bb562801f3 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -367,50 +367,82 @@ SEDIMENTO_FIELDS = [
+     {"key": "cilindros", "label": "Cilindros", "reference": "0-2 hialinos/campo", "optional": True},
+     {"key": "otros_hallazgos", "label": "Otros hallazgos", "type": "text_area", "optional": True}
+ ]
+ 
+ def build_bool_observation_template(positive_text="Positivo", negative_text="Negativo", reference_text="Negativo"):
+     return {
+         "fields": [
+             {
+                 "key": "resultado",
+                 "label": "Resultado",
+                 "type": "bool",
+                 "positive_text": positive_text,
+                 "negative_text": negative_text,
+                 "reference": reference_text
+             },
+             {
+                 "key": "observaciones",
+                 "label": "Observaciones",
+                 "type": "text_area",
+                 "optional": True,
+                 "placeholder": "Observaciones (opcional)"
+             }
+         ]
+     }
+ 
++
++def build_multi_sample_bool_template(
++    sample_count=3,
++    positive_text="Positivo",
++    negative_text="Negativo",
++    reference_text="Negativo",
++    sample_label_prefix="Muestra",
++):
++    fields = []
++    for idx in range(1, sample_count + 1):
++        fields.append({"type": "section", "label": f"{sample_label_prefix} {idx}"})
++        fields.append(
++            {
++                "key": f"muestra_{idx}",
++                "label": f"Resultado {sample_label_prefix.lower()} {idx}",
++                "type": "bool",
++                "positive_text": positive_text,
++                "negative_text": negative_text,
++                "reference": reference_text,
++            }
++        )
++    fields.append(
++        {
++            "key": "observaciones",
++            "label": "Observaciones",
++            "type": "text_area",
++            "optional": True,
++            "placeholder": "Observaciones generales",
++        }
++    )
++    return {"fields": fields}
++
+ def build_single_value_template(key, label, unit=None, reference=None, placeholder=None, helper=None, optional=False, field_type="line", choices=None):
+     field = {
+         "key": key,
+         "label": label
+     }
+     if unit:
+         field["unit"] = unit
+     if reference:
+         field["reference"] = reference
+     if placeholder:
+         field["placeholder"] = placeholder
+     if helper:
+         field["helper"] = helper
+     if optional:
+         field["optional"] = True
+     if field_type != "line":
+         field["type"] = field_type
+     if choices:
+         field["choices"] = choices
+     return {"fields": [field]}
+ 
+ SECRECION_VAGINAL_FIELDS = [
+     {"type": "section", "label": "Evaluación clínica"},
+     {"key": "ph", "label": "pH vaginal", "reference": "Mujer fértil: 3.8-4.5 | Postmenopáusica: hasta 5.0", "placeholder": "Ej. 4.2"},
+     {"key": "aspecto", "label": "Aspecto", "reference": "Homogéneo, blanco lechoso", "optional": True},
+@@ -860,51 +892,50 @@ SIMPLE_TEXTAREA_TESTS = {
+         "reference": "Eritrocitos normocíticos normocrómicos, leucocitos sin alteraciones, plaquetas adecuadas",
+         "placeholder": "Describa morfología observada"
+     },
+     "Identificación bioquímica": {
+         "key": "panel_bioquimico",
+         "label": "Perfil bioquímico",
+         "reference": "Describa pruebas realizadas según manual CLSI vigente",
+         "placeholder": "Ej. Enterobacter cloacae, panel API 20E"
+     },
+     "Antibiograma": {
+         "key": "antibiograma",
+         "label": "Antibiograma",
+         "reference": "Interpretar según guías CLSI/EUCAST",
+         "placeholder": "Antibiótico - Interpretación (S/I/R)"
+     }
+ }
+ 
+ BOOL_TESTS = {
+     "Células LE": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"},
+     "Baciloscopía": {"positive_text": "BAAR positivo", "negative_text": "BAAR negativo", "reference": "No se observan bacilos ácido-alcohol resistentes"},
+     "Gota gruesa": {"positive_text": "Hemoparásitos", "negative_text": "No se observan", "reference": "No se observan Plasmodium spp."},
+     "Frotis para Leishmaniasis": {"positive_text": "Leishmania sp.", "negative_text": "No se observan", "reference": "No se observan amastigotes"},
+     "Cultivo de Neisseria gonorrhoeae": {"positive_text": "Aislamiento positivo", "negative_text": "Sin aislamiento", "reference": "No se aisla N. gonorrhoeae"},
+     "Cultivo de Campylobacter spp.": {"positive_text": "Aislamiento positivo", "negative_text": "Sin aislamiento", "reference": "No se aisla Campylobacter spp."},
+     "Frotis para Bartonella": {"positive_text": "Cuerpos de Bartonella", "negative_text": "No se observan", "reference": "Negativo"},
+-    "Test de Graham": {"positive_text": "Huevos presentes", "negative_text": "No se observan", "reference": "Sin huevos de Enterobius vermicularis"},
+     "Ácido sulfasalicílico al 3%": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo (proteínas ≤30 mg/dL)"},
+     "Antígeno de superficie Hepatitis B (HBsAg)": {
+         "positive_text": "Reactivo",
+         "negative_text": "No reactivo",
+         "reference": "No reactivo"
+     },
+     "Reagina plasmática rápida (RPR)": {
+         "positive_text": "Reactivo",
+         "negative_text": "No reactivo",
+         "reference": "No reactivo"
+     },
+     "Proteína C reactiva (PCR) - Látex": {"positive_text": "Reactivo", "negative_text": "No reactivo", "reference": "No reactivo"},
+     "BHCG (Prueba de embarazo en sangre)": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo (<5 mUI/mL)"}
+ }
+ 
+ SAMPLE_TEMPLATES = {
+     "Leishmaniasis (toma de muestra)": build_sample_tracking_template("Registro de remisión según NTS para vigilancia de leishmaniasis"),
+     "Dengue (toma de muestra)": build_sample_tracking_template("Mantener cadena de frío 2-8 °C"),
+     "Leptospirosis (toma de muestra)": build_sample_tracking_template("Documentar envío a laboratorio de referencia"),
+     "Covid-19 (hisopado nasofaríngeo)": build_sample_tracking_template("Remitir en medio viral a 4 °C"),
+     "Carga viral de VIH / Recuento de CD4": build_sample_tracking_template("Registrar código de envío y hora"),
+     "CLIA (PSA, Perfil tiroideo, etc.)": build_sample_tracking_template("Sin valores de referencia: registro de muestra derivada"),
+     "Sangre venosa/arterial (examen de proceso)": build_sample_tracking_template("Control de cadena de custodia (sin valores analíticos)"),
+     "Covid-19 (Prueba antigénica)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
+     "Covid-19 (Prueba serológica)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
+@@ -927,50 +958,65 @@ for test_name, info in SIMPLE_NUMERIC_TESTS.items():
+         unit=info.get("unit"),
+         reference=info.get("reference"),
+         placeholder=info.get("placeholder"),
+         helper=info.get("helper")
+     )
+ 
+ for test_name, info in SIMPLE_TEXTAREA_TESTS.items():
+     TEST_TEMPLATES[test_name] = build_single_value_template(
+         info["key"],
+         info.get("label", test_name),
+         reference=info.get("reference"),
+         placeholder=info.get("placeholder"),
+         field_type="text_area"
+     )
+ 
+ for test_name, params in BOOL_TESTS.items():
+     TEST_TEMPLATES[test_name] = build_bool_observation_template(
+         params.get("positive_text", "Positivo"),
+         params.get("negative_text", "Negativo"),
+         params.get("reference", "Negativo")
+     )
+ 
+ for test_name, template in SAMPLE_TEMPLATES.items():
+     TEST_TEMPLATES[test_name] = copy.deepcopy(template)
+ 
++# Plantillas específicas para exámenes con múltiples muestras
++TEST_TEMPLATES["Parasitológico seriado"] = build_multi_sample_bool_template(
++    sample_count=3,
++    positive_text="Positivo",
++    negative_text="Negativo",
++    reference_text="No se observan parásitos",
++)
++
++TEST_TEMPLATES["Test de Graham"] = build_multi_sample_bool_template(
++    sample_count=3,
++    positive_text="Huevos presentes",
++    negative_text="No se observan",
++    reference_text="Sin huevos de Enterobius vermicularis",
++)
++
+ # Plantilla base para Hematocrito sin cálculo automático
+ HEMATOCRIT_BASE_TEMPLATE = build_single_value_template(
+     "hematocrito",
+     "Hematocrito",
+     unit="%",
+     reference=(
+         "RN: 44-65 %\n"
+         "Niños 1-10 a: 35-45 %\n"
+         "Hombres adultos: 40-54 %\n"
+         "Mujeres adultas: 36-47 %\n"
+         "Gestantes (2°-3° trim): 33-43 %"
+     ),
+     placeholder="Ej. 43"
+ )
+ TEST_TEMPLATES["Hematocrito"] = copy.deepcopy(HEMATOCRIT_BASE_TEMPLATE)
+ 
+ 
+ def build_hematocrit_template(include_auto_hemoglobin=False):
+     template = copy.deepcopy(HEMATOCRIT_BASE_TEMPLATE)
+     fields = copy.deepcopy(HEMATOCRIT_BASE_TEMPLATE.get("fields", []))
+     if include_auto_hemoglobin:
+         hb_reference = SIMPLE_NUMERIC_TESTS.get("Hemoglobina", {}).get("reference")
+         fields.append(
+             {
+                 "key": "hemoglobina",
+@@ -2633,108 +2679,118 @@ class MainWindow(QMainWindow):
+         if not self.selected_order_id:
+             return
+         results_payload = {}
+         has_empty = False
+         pending_samples = 0
+         pending_tests = []
+         missing_notes = []
+         for test_name, info in self.order_fields.items():
+             template = info.get("template")
+             meta = info.get("meta", {})
+             status_combo = meta.get("status_widget")
+             issue_widget = meta.get("issue_widget")
+             observation_widget = meta.get("observation_widget")
+             pending_since_value = meta.get("pending_since")
+             status_value = "recibida"
+             if status_combo:
+                 status_data = status_combo.currentData()
+                 if status_data:
+                     status_value = str(status_data).strip().lower()
+                 else:
+                     status_value = status_combo.currentText().strip().lower() or "recibida"
+             issue_value = issue_widget.text().strip() if issue_widget else ""
+             observation_value = observation_widget.toPlainText().strip() if observation_widget else ""
+             if status_value == "pendiente":
+                 pending_samples += 1
+-                pending_tests.append(test_name)
++                pending_tests.append({
++                    "name": test_name,
++                    "issue": issue_value,
++                })
+             else:
+                 pending_since_value = None
+             if status_value == "recibida":
+                 issue_value = ""
+             if status_value in {"pendiente", "rechazada"} and not issue_value:
+                 missing_notes.append(test_name)
+             if template:
+                 values = {}
+                 for key, field_info in info["fields"].items():
+                     value = self._get_widget_value(field_info)
+                     values[key] = value
+                     if status_value == "recibida" and value == "" and not field_info["definition"].get("optional", False):
+                         has_empty = True
+                 result_value = {
+                     "type": "structured",
+                     "template": info.get("template_name", test_name),
+                     "values": values
+                 }
+             else:
+                 field_info = info["fields"].get("__value__")
+                 value = self._get_widget_value(field_info)
+                 if status_value == "recibida" and value == "":
+                     has_empty = True
+                 result_value = value
+             results_payload[test_name] = {
+                 "result": result_value,
+                 "sample_status": status_value,
+                 "sample_issue": issue_value,
+                 "observation": observation_value,
+                 "pending_since": pending_since_value
+             }
+         if missing_notes:
+             detalle = ", ".join(missing_notes)
+             QMessageBox.warning(
+                 self,
+                 "Motivo requerido",
+                 f"Indique el motivo o detalle para las muestras marcadas como pendientes/rechazadas: {detalle}"
+             )
+             return
+         if has_empty:
+             reply = QMessageBox.question(
+                 self,
+                 "Confirmar",
+                 "Hay pruebas o campos sin resultado. ¿Guardar de todos modos?",
+                 QMessageBox.Yes | QMessageBox.No
+             )
+             if reply == QMessageBox.No:
+                 return
+         completed = self.labdb.save_results(self.selected_order_id, results_payload)
+         followup_order_id = None
++        updated_completion = None
+         if pending_tests:
+-            followup_order_id = self.labdb.ensure_followup_order_for_pending(
++            followup_order_id, updated_completion = self.labdb.ensure_followup_order_for_pending(
+                 self.selected_order_id,
+                 pending_tests,
+                 self.user.get('id')
+             )
+-            if followup_order_id:
++            if updated_completion is not None:
++                completed = updated_completion
++                self.populate_pending_orders()
++                self.populate_completed_orders()
++                if self.selected_order_id:
++                    self._select_order_in_combo(self.combo_orders, self.selected_order_id)
++            elif followup_order_id:
+                 self.populate_pending_orders()
+                 if self.selected_order_id:
+                     self._select_order_in_combo(self.combo_orders, self.selected_order_id)
+         self.update_pending_overview_button()
+         base_message = "Resultados guardados. Orden marcada como completada." if completed else "Resultados guardados (orden aún incompleta)."
+         if pending_samples:
+             base_message += "\nHay muestras pendientes o rechazadas registradas."
+         if followup_order_id:
+             base_message += f"\nSe generó la orden #{followup_order_id} para el seguimiento de las pruebas pendientes."
+         if completed:
+             QMessageBox.information(self, "Completado", base_message)
+             self.selected_order_id = None
+             self.populate_pending_orders()
+             self._clear_results_layout()
+             msg = QLabel("Seleccione otra orden pendiente para continuar con la digitación de resultados.")
+             msg.setStyleSheet("color: #555; font-style: italic;")
+             msg.setWordWrap(True)
+             self.results_layout.addWidget(msg)
+             self.results_layout.addStretch()
+         else:
+             QMessageBox.information(self, "Guardado", base_message)
+             self.load_order_fields()
+ 
+     def _clear_results_layout(self):
+         if not hasattr(self, 'results_layout'):

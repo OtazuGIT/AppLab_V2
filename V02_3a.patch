@@ -1,0 +1,956 @@
+diff --git a/main_window.py b/main_window.py
+index 51597103ed7e27f6b91312e3f37416f0797ca54d..b1dd2d547950d098e3fd491b81b4da6fcab62ac9 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -115,50 +115,61 @@ REGISTRY_ABBREVIATIONS = {
+     "hematies/c": "Hto/c",
+     "ph": "pH",
+     "ph vaginal": "pH",
+     "color": "Color",
+     "aspecto": "Aspecto",
+     "olor": "Olor",
+     "densidad": "Dens",
+     "protein as": "Prot",
+     "proteinas": "Prot",
+     "nitritos": "Nit",
+     "glucosa (quimico)": "Glu",
+     "cetonas": "Cet",
+     "urobilinogeno": "Urob",
+     "bilirrubina": "Bil",
+     "leucocitos quimico": "Leu",
+     "leucocitos/campo": "Leu/c",
+     "celulas epiteliales/c": "Cel epi",
+     "cilindros/c": "Cil",
+     "otros hallazgos": "Otros",
+     "parasitos": "Par",
+     "levaduras": "Lev",
+     "moco": "Moco",
+     "consistencia": "Cons"
+ }
+ 
++LEUCOCYTE_KEYS = [
++    "segmentados",
++    "abastonados",
++    "linfocitos",
++    "monocitos",
++    "eosinofilos",
++    "basofilos",
++    "mielocitos",
++    "metamielocitos",
++]
++
+ # Definiciones de plantillas de resultados estructurados por examen
+ HEMOGRAM_BASE_FIELDS = [
+     {
+         "key": "hematocrito",
+         "label": "Hematocrito (Hto)",
+         "unit": "%",
+         "reference": (
+             "RN: 44-65 %\n"
+             "Niños 1-10 a: 35-45 %\n"
+             "Hombres adultos: 40-54 %\n"
+             "Mujeres adultas: 36-47 %\n"
+             "Gestantes (2°-3° trim): 33-43 %"
+         ),
+         "placeholder": "Ej. 42.5"
+     },
+     {
+         "key": "hemoglobina",
+         "label": "Hemoglobina (Hb)",
+         "unit": "g/dL",
+         "reference": (
+             "RN: 14.0-24.0 g/dL\n"
+             "1-12 meses: 10.0-12.5 g/dL\n"
+             "Niños 1-12 años: 11.5-15.5 g/dL\n"
+             "Mujeres adultas: 12.0-16.0 g/dL\n"
+             "Hombres adultos: 13.5-17.5 g/dL\n"
+@@ -2060,143 +2071,228 @@ class MainWindow(QMainWindow):
+         search_layout = QHBoxLayout()
+         search_label = QLabel("Buscar:")
+         self.order_search_input = QLineEdit()
+         self.order_search_input.setPlaceholderText("Nombre, documento o # de orden")
+         search_layout.addWidget(search_label)
+         search_layout.addWidget(self.order_search_input, 1)
+         sort_label = QLabel("Ordenar:")
+         self.pending_sort_combo = QComboBox()
+         self.pending_sort_combo.addItems([
+             "Fecha (recientes primero)",
+             "Fecha (antiguas primero)",
+             "Número de orden (descendente)",
+             "Número de orden (ascendente)"
+         ])
+         search_layout.addWidget(sort_label)
+         search_layout.addWidget(self.pending_sort_combo)
+         search_layout.addStretch()
+         layout.addLayout(search_layout)
+         top_layout = QHBoxLayout()
+         lbl = QLabel("Orden pendiente:")
+         self.combo_orders = QComboBox()
+         self.combo_orders.setMinimumWidth(350)
+         btn_load = QPushButton("Cargar")
+         self.results_add_tests_btn = QPushButton("Agregar pruebas")
+         self.results_add_tests_btn.setEnabled(False)
++        self.pending_overview_btn = QPushButton("Pendientes (0)")
++        self.pending_overview_btn.setEnabled(False)
+         btn_delete_order = QPushButton("Eliminar orden")
+         btn_delete_order.setStyleSheet(
+             "QPushButton { background-color: #ffe8e6; color: #c0392b; border-radius: 10px; border: 1px solid #c0392b; }"
+             "QPushButton:hover:!disabled { background-color: #fbd1ce; }"
+         )
+         top_layout.addWidget(lbl)
+         top_layout.addWidget(self.combo_orders)
+         top_layout.addWidget(btn_load)
+         top_layout.addWidget(self.results_add_tests_btn)
++        top_layout.addWidget(self.pending_overview_btn)
+         top_layout.addWidget(btn_delete_order)
+         layout.addLayout(top_layout)
+         # Área scrollable para campos de resultados
+         self.results_area = QScrollArea()
+         self.results_area.setWidgetResizable(True)
+         self.results_container = QWidget()
+         self.results_layout = QVBoxLayout(self.results_container)
+         self.results_layout.setContentsMargins(10, 10, 10, 10)
+         self.results_layout.setSpacing(14)
+         self.results_area.setWidget(self.results_container)
+         layout.addWidget(self.results_area)
+         btn_save = QPushButton("Guardar Resultados")
+         layout.addWidget(btn_save)
+         btn_load.clicked.connect(self.load_order_fields)
+         btn_save.clicked.connect(self.save_results)
+         btn_delete_order.clicked.connect(self.delete_order_from_results)
+         self.results_add_tests_btn.clicked.connect(self.add_tests_to_selected_order)
++        self.pending_overview_btn.clicked.connect(self.show_pending_tests_overview)
+         self.order_search_input.textChanged.connect(self.filter_pending_orders)
+         self.pending_sort_combo.currentIndexChanged.connect(
+             lambda: self.filter_pending_orders(self.order_search_input.text(), prefer_order=self.selected_order_id)
+         )
++        self.update_pending_overview_button()
+     def populate_pending_orders(self):
+         # Llenar combo de órdenes pendientes (no completadas)
+         pending = self.labdb.get_pending_orders()
+         self.pending_orders_cache = []
+         for row in pending:
+             oid, first, last, date, sample_date, doc_type, doc_number = row
+             self.pending_orders_cache.append({
+                 "id": oid,
+                 "first_name": (first or "").upper(),
+                 "last_name": (last or "").upper(),
+                 "date": date,
+                 "sample_date": sample_date,
+                 "doc_type": doc_type or "",
+                 "doc_number": doc_number or ""
+             })
+         search_text = self.order_search_input.text() if hasattr(self, 'order_search_input') else ""
+         prefer_id = self.selected_order_id or self.last_order_registered
+         self.filter_pending_orders(search_text, prefer_order=prefer_id)
++        self.update_pending_overview_button()
+     def filter_pending_orders(self, text="", prefer_order=None):
+         if not hasattr(self, 'combo_orders'):
+             return
+         filter_text = (text or "").strip().lower()
+         current_data = self.combo_orders.currentData()
+         self.combo_orders.blockSignals(True)
+         self.combo_orders.clear()
+         orders = getattr(self, 'pending_orders_cache', [])
+         filtered_orders = []
+         for order in orders:
+             search_blob = " ".join([
+                 str(order['id']),
+                 order['first_name'] or "",
+                 order['last_name'] or "",
+                 order['doc_type'] or "",
+                 order['doc_number'] or "",
+                 order.get('date') or "",
+                 order.get('sample_date') or ""
+             ]).lower()
+             if filter_text in search_blob:
+                 filtered_orders.append(order)
+         sort_mode = self.pending_sort_combo.currentIndex() if hasattr(self, 'pending_sort_combo') else 0
+         sorted_orders = self._sort_orders(filtered_orders, sort_mode)
+         matching_ids = [order['id'] for order in sorted_orders]
+         for order in sorted_orders:
+             display = self._format_order_display(order)
+             self.combo_orders.addItem(display, order['id'])
+         if not matching_ids:
+             self.combo_orders.addItem("(No hay órdenes pendientes)", None)
+         self.combo_orders.blockSignals(False)
+         target_candidates = [
+             prefer_order,
+             current_data,
+             self.selected_order_id,
+             self.last_order_registered
+         ]
+         selected = None
+         for candidate in target_candidates:
+             if candidate is not None and candidate in matching_ids:
+                 selected = candidate
+                 break
+         if selected is not None:
+             self._select_order_in_combo(self.combo_orders, selected)
+         else:
+             self.combo_orders.setCurrentIndex(0)
++
++    def update_pending_overview_button(self):
++        if not hasattr(self, 'pending_overview_btn'):
++            return
++        try:
++            count = self.labdb.count_pending_tests()
++        except Exception:
++            count = 0
++        self.pending_overview_btn.setText(f"Pendientes ({count})")
++        self.pending_overview_btn.setEnabled(count > 0)
++        tooltip = "Ver lista de exámenes marcados como pendientes." if count else "No hay exámenes pendientes registrados."
++        self.pending_overview_btn.setToolTip(tooltip)
++
++    def show_pending_tests_overview(self):
++        rows = []
++        try:
++            rows = self.labdb.get_pending_tests_overview()
++        except Exception:
++            rows = []
++        if not rows:
++            QMessageBox.information(self, "Sin pendientes", "No hay exámenes marcados como pendientes.")
++            self.update_pending_overview_button()
++            return
++        dialog = QDialog(self)
++        dialog.setWindowTitle("Exámenes pendientes")
++        dialog.setModal(True)
++        layout = QVBoxLayout(dialog)
++        summary_label = QLabel(f"Pendientes registrados: {len(rows)}")
++        summary_label.setStyleSheet("font-weight: 600; color: #2c3e50;")
++        layout.addWidget(summary_label)
++        table = QTableWidget(len(rows), 6)
++        headers = ["Orden", "Paciente", "Documento", "Examen", "Pendiente desde", "Motivo"]
++        table.setHorizontalHeaderLabels(headers)
++        table.horizontalHeader().setStretchLastSection(True)
++        table.verticalHeader().setVisible(False)
++        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
++        table.setSelectionBehavior(QAbstractItemView.SelectRows)
++        table.setSelectionMode(QAbstractItemView.SingleSelection)
++        for row_idx, row in enumerate(rows):
++            (
++                order_id,
++                test_name,
++                first,
++                last,
++                doc_type,
++                doc_number,
++                pending_since,
++                sample_issue,
++                sample_date,
++                order_date
++            ) = row
++            patient_name = " ".join(part for part in [(first or "").upper(), (last or "").upper()] if part).strip() or "-"
++            doc_text = " ".join(part for part in (doc_type, doc_number) if part).strip() or "-"
++            pending_display = self._format_datetime_display(pending_since, "—") if pending_since else "—"
++            if pending_display == "—" and sample_date:
++                pending_display = self._format_date_display(sample_date, "—")
++            if pending_display == "—" and order_date:
++                pending_display = self._format_datetime_display(order_date, "—")
++            motive = sample_issue.strip() if isinstance(sample_issue, str) else sample_issue or "—"
++            values = [
++                str(order_id),
++                patient_name,
++                doc_text,
++                test_name,
++                pending_display,
++                motive,
++            ]
++            for col, value in enumerate(values):
++                item = QTableWidgetItem(value)
++                if col == 0:
++                    item.setTextAlignment(Qt.AlignCenter)
++                table.setItem(row_idx, col, item)
++        table.resizeColumnsToContents()
++        layout.addWidget(table)
++        close_btn = QDialogButtonBox(QDialogButtonBox.Close)
++        close_btn.rejected.connect(dialog.reject)
++        layout.addWidget(close_btn)
++        dialog.resize(720, 360)
++        dialog.exec_()
+     def _format_order_display(self, order):
+         doc_type = order.get('doc_type') or ""
+         doc_number = order.get('doc_number') or ""
+         doc_text = f" ({doc_type} {doc_number})" if doc_type and doc_number else ""
+         first = (order.get('first_name') or "").upper()
+         last = (order.get('last_name') or "").upper()
+         name_text = (f"{first} {last}").strip()
+         status_tag = ""
+         if 'emitted' in order:
+             status_tag = " [EMITIDO]" if order.get('emitted') else " [POR EMITIR]"
+         order_timestamp = self._format_datetime_display(order.get('date'), "-")
+         sample_display = self._format_date_display(order.get('sample_date'), "-")
+         name_section = name_text if name_text else "Sin paciente"
+         return (
+             f"Orden #{order['id']} · {name_section}{doc_text} · "
+             f"Registro: {order_timestamp} · F. muestra: {sample_display}{status_tag}"
+         )
+     def _select_order_in_combo(self, combo, order_id):
+         for idx in range(combo.count()):
+             if combo.itemData(idx) == order_id:
+                 combo.setCurrentIndex(idx)
+                 return
+ 
+     def _parse_order_datetime(self, order):
+         date_str = order.get('date') if isinstance(order, dict) else None
+@@ -2327,95 +2423,99 @@ class MainWindow(QMainWindow):
+         sample_display = self._format_date_display(order_info.get('sample_date'), "-")
+         requester_display = order_info.get('requested_by') or "-"
+         origin_display = (patient_info.get('origin') or '-').upper()
+         insurance_display = self._format_insurance_display(order_info.get('insurance_type'))
+         _add_summary(0, 0, "Paciente", patient_name)
+         _add_summary(0, 2, "Documento", doc_display)
+         _add_summary(1, 0, "F. registro", order_timestamp)
+         _add_summary(1, 2, "F. muestra", sample_display)
+         _add_summary(2, 0, "Solicitante", requester_display)
+         _add_summary(2, 2, "Procedencia", origin_display)
+         _add_summary(3, 0, "Seguro", insurance_display)
+         fua_display = order_info.get('fua_number') or "-"
+         _add_summary(3, 2, "FUA", fua_display if insurance_display != "PARTICULAR" else "No aplica")
+         self.results_layout.addWidget(summary_group)
+         if hasattr(self, 'results_add_tests_btn'):
+             self.results_add_tests_btn.setEnabled(True)
+         order_test_names = [name for (name, *_rest) in rows]
+         for entry in rows:
+             (
+                 test_name,
+                 raw_result,
+                 category,
+                 sample_status,
+                 sample_issue,
+                 observation,
+-                _entry_id
++                _entry_id,
++                pending_since
+             ) = entry
+             template = None
+             template_name = test_name
+             if test_name == "Hematocrito":
+                 auto_mode = self._should_auto_calculate_hb(order_test_names)
+                 template = build_hematocrit_template(auto_mode)
+                 if auto_mode:
+                     template_name = "Hematocrito (automático)"
+                     TEST_TEMPLATES[template_name] = copy.deepcopy(template)
+             else:
+                 base_template = TEST_TEMPLATES.get(test_name)
+                 if base_template is not None:
+                     template = copy.deepcopy(base_template)
+                 elif category == "PRUEBAS RÁPIDAS":
+                     template = build_bool_observation_template()
+                     TEST_TEMPLATES[test_name] = copy.deepcopy(template)
+             group_box = QGroupBox(test_name)
+             group_box.setStyleSheet("QGroupBox { font-weight: bold; }")
+             container_layout = QVBoxLayout()
+             header_layout = QHBoxLayout()
+             header_layout.addStretch()
+             status_container = QWidget()
+             status_layout = QHBoxLayout(status_container)
+             status_layout.setContentsMargins(0, 0, 0, 0)
+             status_layout.setSpacing(6)
+             status_label = QLabel("Estado de muestra:")
+             status_combo = QComboBox()
+             status_combo.addItem("Recibida", "recibida")
+             status_combo.addItem("Pendiente", "pendiente")
+             status_combo.addItem("Rechazada", "rechazada")
+             status_value = (sample_status or "recibida").strip().lower()
+             idx = status_combo.findData(status_value)
+             if idx >= 0:
+                 status_combo.setCurrentIndex(idx)
+             issue_input = QLineEdit()
+             issue_input.setPlaceholderText("Detalle / motivo (si aplica)")
+             if sample_issue:
+                 issue_input.setText(str(sample_issue))
+             btn_pending = QPushButton("Marcar pendiente")
+             btn_pending.setStyleSheet("QPushButton { font-size: 10px; }")
+             status_layout.addWidget(status_label)
+             status_layout.addWidget(status_combo)
+             status_layout.addWidget(issue_input, 1)
+             status_layout.addWidget(btn_pending)
++            pending_since_label = QLabel()
++            pending_since_label.setStyleSheet("color: #8e44ad; font-size: 11px;")
++            status_layout.addWidget(pending_since_label)
+             observation_edit = QTextEdit()
+             observation_edit.setFixedHeight(40)
+             observation_edit.setPlaceholderText("Observaciones de la muestra (opcional)")
+             if observation:
+                 observation_edit.setPlainText(str(observation))
+             remove_button = QPushButton("Quitar examen")
+             remove_button.setStyleSheet("QPushButton { font-size: 10px; color: #c0392b; }")
+             remove_button.clicked.connect(lambda _=False, name=test_name: self._prompt_remove_test(name))
+             header_layout.addWidget(remove_button)
+             container_layout.addLayout(header_layout)
+             container_layout.addWidget(status_container)
+             group_layout = QFormLayout()
+             group_layout.setLabelAlignment(Qt.AlignLeft)
+             container_layout.addLayout(group_layout)
+             group_box.setLayout(container_layout)
+             parsed = self._parse_stored_result(raw_result)
+             existing_values = {}
+             if parsed.get("type") == "structured":
+                 existing_values = parsed.get("values", {})
+             field_entries = {}
+             if template:
+                 for field_def in template.get("fields", []):
+                     if field_def.get("type") == "section":
+                         section_label = QLabel(field_def.get("label", ""))
+                         section_label.setStyleSheet("font-weight: bold; color: #2c3e50; padding-top:4px;")
+@@ -2431,197 +2531,231 @@ class MainWindow(QMainWindow):
+                 self.order_fields[test_name] = {
+                     "template": template,
+                     "template_name": template_name,
+                     "fields": field_entries
+                 }
+             else:
+                 default_value = ""
+                 if parsed.get("type") == "text":
+                     default_value = parsed.get("value", "")
+                 elif parsed.get("type") == "structured":
+                     default_value = self._structured_dict_to_text(parsed.get("values", {}))
+                 edit = QLineEdit()
+                 edit.setText(default_value)
+                 group_layout.addRow("Resultado:", edit)
+                 self.order_fields[test_name] = {
+                     "template": None,
+                     "fields": {
+                         "__value__": {
+                             "type": "line",
+                             "widget": edit,
+                             "definition": {"key": "__value__", "label": "Resultado"}
+                         }
+                     }
+                 }
+             group_layout.addRow("Obs. de la muestra:", observation_edit)
++            meta_info = {
++                "status_widget": status_combo,
++                "issue_widget": issue_input,
++                "observation_widget": observation_edit,
++                "initial_status": status_value,
++                "pending_since": pending_since,
++                "pending_label": pending_since_label,
++            }
++
++            def _refresh_pending_label():
++                current_index = status_combo.currentIndex()
++                current_value = status_combo.itemData(current_index)
++                if current_value == "pendiente":
++                    timestamp = meta_info.get("pending_since")
++                    if timestamp:
++                        display = self._format_datetime_display(timestamp, "-", include_seconds=False)
++                        pending_since_label.setText(f"Pendiente desde: {display}")
++                    else:
++                        pending_since_label.setText("Pendiente desde: se registrará al guardar")
++                    pending_since_label.setVisible(True)
++                else:
++                    pending_since_label.clear()
++                    pending_since_label.setVisible(False)
++
+             def _update_issue_state(index):
+                 value = status_combo.itemData(index)
+                 needs_detail = value in {"pendiente", "rechazada"}
+                 issue_input.setEnabled(needs_detail)
++                if value == "pendiente":
++                    if not meta_info.get("pending_since"):
++                        meta_info["pending_since"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
++                else:
++                    meta_info["pending_since"] = None
++                _refresh_pending_label()
++
+             status_combo.currentIndexChanged.connect(_update_issue_state)
+             _update_issue_state(status_combo.currentIndex())
+ 
+             def _set_pending():
+                 pending_index = status_combo.findData("pendiente")
+                 if pending_index >= 0:
+                     status_combo.setCurrentIndex(pending_index)
+                 issue_input.setFocus()
++
+             btn_pending.clicked.connect(_set_pending)
+ 
+-            self.order_fields[test_name]["meta"] = {
+-                "status_widget": status_combo,
+-                "issue_widget": issue_input,
+-                "observation_widget": observation_edit
+-            }
++            self.order_fields[test_name]["meta"] = meta_info
++            self._maybe_add_leukocyte_counter(test_name, self.order_fields[test_name], container_layout)
+             self.results_layout.addWidget(group_box)
+         self.results_layout.addStretch()
+ 
+     def _should_auto_calculate_hb(self, order_test_names):
+         valid_names = [name for name in order_test_names if name]
+         return valid_names.count("Hematocrito") == 1 and len(valid_names) == 1
+ 
+     def _prompt_remove_test(self, test_name):
+         if not self.selected_order_id:
+             return
+         reply = QMessageBox.question(
+             self,
+             "Quitar examen",
+             f"¿Desea quitar la prueba '{test_name}' de la orden seleccionada?",
+             QMessageBox.Yes | QMessageBox.No
+         )
+         if reply == QMessageBox.No:
+             return
+         removed = self.labdb.remove_test_from_order(self.selected_order_id, test_name)
+         if removed:
+             QMessageBox.information(self, "Prueba eliminada", f"Se quitó '{test_name}' de la orden.")
+             self.populate_pending_orders()
+             self.populate_completed_orders()
+             self.load_order_fields()
+         else:
+             QMessageBox.warning(self, "Acción no realizada", "No se pudo quitar la prueba seleccionada.")
+ 
+     def save_results(self):
+         # Guardar los resultados ingresados para la orden seleccionada
+         if not self.selected_order_id:
+             return
+         results_payload = {}
+         has_empty = False
+         pending_samples = 0
+         pending_tests = []
+         missing_notes = []
+         for test_name, info in self.order_fields.items():
+             template = info.get("template")
+             meta = info.get("meta", {})
+             status_combo = meta.get("status_widget")
+             issue_widget = meta.get("issue_widget")
+             observation_widget = meta.get("observation_widget")
++            pending_since_value = meta.get("pending_since")
+             status_value = "recibida"
+             if status_combo:
+                 status_data = status_combo.currentData()
+                 if status_data:
+                     status_value = str(status_data).strip().lower()
+                 else:
+                     status_value = status_combo.currentText().strip().lower() or "recibida"
+             issue_value = issue_widget.text().strip() if issue_widget else ""
+             observation_value = observation_widget.toPlainText().strip() if observation_widget else ""
+             if status_value == "pendiente":
+                 pending_samples += 1
+-                pending_tests.append(test_name) 
++                pending_tests.append(test_name)
++            else:
++                pending_since_value = None
+             if status_value == "recibida":
+                 issue_value = ""
+             if status_value in {"pendiente", "rechazada"} and not issue_value:
+                 missing_notes.append(test_name)
+             if template:
+                 values = {}
+                 for key, field_info in info["fields"].items():
+                     value = self._get_widget_value(field_info)
+                     values[key] = value
+                     if status_value == "recibida" and value == "" and not field_info["definition"].get("optional", False):
+                         has_empty = True
+                 result_value = {
+                     "type": "structured",
+                     "template": info.get("template_name", test_name),
+                     "values": values
+                 }
+             else:
+                 field_info = info["fields"].get("__value__")
+                 value = self._get_widget_value(field_info)
+                 if status_value == "recibida" and value == "":
+                     has_empty = True
+                 result_value = value
+             results_payload[test_name] = {
+                 "result": result_value,
+                 "sample_status": status_value,
+                 "sample_issue": issue_value,
+-                "observation": observation_value
++                "observation": observation_value,
++                "pending_since": pending_since_value
+             }
+         if missing_notes:
+             detalle = ", ".join(missing_notes)
+             QMessageBox.warning(
+                 self,
+                 "Motivo requerido",
+                 f"Indique el motivo o detalle para las muestras marcadas como pendientes/rechazadas: {detalle}"
+             )
+             return
+         if has_empty:
+             reply = QMessageBox.question(
+                 self,
+                 "Confirmar",
+                 "Hay pruebas o campos sin resultado. ¿Guardar de todos modos?",
+                 QMessageBox.Yes | QMessageBox.No
+             )
+             if reply == QMessageBox.No:
+                 return
+         completed = self.labdb.save_results(self.selected_order_id, results_payload)
+         followup_order_id = None
+         if pending_tests:
+             followup_order_id = self.labdb.ensure_followup_order_for_pending(
+                 self.selected_order_id,
+                 pending_tests,
+                 self.user.get('id')
+             )
+             if followup_order_id:
+                 self.populate_pending_orders()
+                 if self.selected_order_id:
+                     self._select_order_in_combo(self.combo_orders, self.selected_order_id)
++        self.update_pending_overview_button()
++        base_message = "Resultados guardados. Orden marcada como completada." if completed else "Resultados guardados (orden aún incompleta)."
++        if pending_samples:
++            base_message += "\nHay muestras pendientes o rechazadas registradas."
++        if followup_order_id:
++            base_message += f"\nSe generó la orden #{followup_order_id} para el seguimiento de las pruebas pendientes."
+         if completed:
+-            QMessageBox.information(self, "Completado", "Resultados guardados. Orden marcada como completada.")
++            QMessageBox.information(self, "Completado", base_message)
+             self.selected_order_id = None
+             self.populate_pending_orders()
+             self._clear_results_layout()
+             msg = QLabel("Seleccione otra orden pendiente para continuar con la digitación de resultados.")
+             msg.setStyleSheet("color: #555; font-style: italic;")
+             msg.setWordWrap(True)
+             self.results_layout.addWidget(msg)
+             self.results_layout.addStretch()
+         else:
+-            message = "Resultados guardados (orden aún incompleta)."
+-            if pending_samples:
+-                message += "\nHay muestras pendientes o rechazadas registradas."
+-            if followup_order_id:
+-                message += f"\nSe generó la orden #{followup_order_id} para el seguimiento de las pruebas pendientes."
+-            QMessageBox.information(self, "Guardado", message)
++            QMessageBox.information(self, "Guardado", base_message)
+             self.load_order_fields()
+ 
+     def _clear_results_layout(self):
+         if not hasattr(self, 'results_layout'):
+             return
+         self.current_order_context = None
+         while self.results_layout.count():
+             item = self.results_layout.takeAt(0)
+             widget = item.widget()
+             if widget:
+                 widget.deleteLater()
+         if hasattr(self, 'results_add_tests_btn'):
+             self.results_add_tests_btn.setEnabled(False)
+     def _create_structured_field(self, field_def, existing_values, context=None):
+         key = field_def.get("key")
+         value = ""
+         if key:
+             value = existing_values.get(key, "")
+         container = QWidget()
+         layout = QHBoxLayout(container)
+         layout.setContentsMargins(0, 0, 0, 0)
+         layout.setSpacing(6)
+         widget_info = {"key": key, "container": container}
+         field_type = field_def.get("type", "text")
+         if field_type == "choice":
+@@ -2680,50 +2814,98 @@ class MainWindow(QMainWindow):
+             if value:
+                 edit.setText(value)
+             layout.addWidget(edit)
+             widget_info.update({"type": "line", "widget": edit})
+         unit = field_def.get("unit")
+         if unit and field_type not in ("bool",):
+             unit_label = QLabel(unit)
+             unit_label.setStyleSheet("color: #555; font-size: 11px;")
+             layout.addWidget(unit_label)
+         reference = self._get_field_reference(field_def, context)
+         if reference:
+             ref_label = QLabel(f"Ref: {reference}")
+             ref_label.setWordWrap(True)
+             ref_label.setStyleSheet("color: #777; font-size: 11px;")
+             layout.addWidget(ref_label)
+         helper = field_def.get("helper")
+         if helper:
+             helper_label = QLabel(helper)
+             helper_label.setWordWrap(True)
+             helper_label.setStyleSheet("color: #0a84ff; font-size: 10px;")
+             layout.addWidget(helper_label)
+         layout.addStretch()
+         widget_info["unit"] = unit
+         widget_info["reference"] = reference
+         return field_def.get("label", key or ""), container, widget_info
++
++    def _maybe_add_leukocyte_counter(self, test_name, field_info, container_layout):
++        if not field_info or not container_layout:
++            return
++        template_name = field_info.get("template_name") or test_name or ""
++        if "hemograma" not in str(template_name).lower():
++            return
++        fields = field_info.get("fields", {})
++        widgets = []
++        for key in LEUCOCYTE_KEYS:
++            info = fields.get(key)
++            if not info:
++                continue
++            widget = info.get("widget")
++            if isinstance(widget, QLineEdit):
++                widgets.append(widget)
++        if not widgets:
++            return
++        counter_label = QLabel("Suma fórmula leucocitaria: —")
++        counter_label.setAlignment(Qt.AlignRight)
++        counter_label.setStyleSheet("color: #5a6b7b; font-style: italic;")
++        container_layout.addWidget(counter_label)
++
++        def _update_counter():
++            total = 0.0
++            has_value = False
++            for widget in widgets:
++                value = self._to_float(widget.text().strip()) if widget else None
++                if value is None:
++                    continue
++                has_value = True
++                total += value
++            if not has_value:
++                counter_label.setText("Suma fórmula leucocitaria: —")
++                counter_label.setStyleSheet("color: #5a6b7b; font-style: italic;")
++                return
++            total_text = f"{total:.1f}".rstrip('0').rstrip('.')
++            counter_label.setText(f"Suma fórmula leucocitaria: {total_text}%")
++            if abs(total - 100) <= 0.5:
++                counter_label.setStyleSheet("color: #1e8449; font-weight: 600;")
++            else:
++                counter_label.setStyleSheet("color: #c0392b; font-weight: 600;")
++
++        for widget in widgets:
++            widget.textChanged.connect(_update_counter)
++        _update_counter()
++        meta = field_info.setdefault("meta", {})
++        meta["leukocyte_counter_label"] = counter_label
+     def _apply_auto_calculations(self, field_entries, template):
+         for calc in template.get("auto_calculations", []):
+             self._setup_auto_calculation(field_entries, calc)
+     def _setup_auto_calculation(self, field_entries, calc):
+         source_key = calc.get("source")
+         target_key = calc.get("target")
+         if not source_key or not target_key:
+             return
+         source_info = field_entries.get(source_key)
+         target_info = field_entries.get(target_key)
+         if not source_info or not target_info:
+             return
+         if source_info.get("type") not in ("line",):
+             return
+         if target_info.get("type") not in ("line",):
+             return
+         source_widget = source_info.get("widget")
+         target_widget = target_info.get("widget")
+         if not source_widget or not target_widget:
+             return
+         operation = calc.get("operation")
+         operand = calc.get("operand")
+         decimals = calc.get("decimals", 2)
+         only_if_empty = calc.get("only_if_empty", False)
+         apply_on_load = calc.get("apply_on_load", True)
+@@ -3344,58 +3526,64 @@ class MainWindow(QMainWindow):
+         display = "Gestante: Sí"
+         if gest_weeks not in (None, "", 0):
+             try:
+                 display += f" ({int(gest_weeks)} sem)"
+             except (TypeError, ValueError):
+                 pass
+         if due_raw:
+             due_display = self._format_short_date(due_raw)
+             if due_display == "—":
+                 due_display = str(due_raw)
+             if due_display:
+                 display += f" - FPP: {due_display}"
+         return display
+ 
+     def _format_fua_display(self, entry):
+         insurance = (entry.get("insurance_type") or "").strip().lower()
+         fua_value = entry.get("fua_number")
+         if insurance == "particular":
+             return "No aplica"
+         if isinstance(fua_value, str):
+             fua_value = fua_value.strip()
+         if fua_value:
+             return str(fua_value)
+         return "Pendiente"
+ 
+-    def _format_sample_status_text(self, status_value, note):
++    def _format_sample_status_text(self, status_value, note, pending_since=None):
+         value = (status_value or "recibida").strip().lower()
+         if value == "recibida":
+             return ""
+         label = "Pendiente" if value == "pendiente" else "Rechazada"
++        date_suffix = ""
++        if value == "pendiente" and pending_since:
++            display = self._format_datetime_display(pending_since, "")
++            if display:
++                date_suffix = f" (desde {display})"
++        base = f"{label}{date_suffix}"
+         if note:
+-            return f"{label} - {note}"
+-        return label
++            return f"{base} - {note}"
++        return base
+     def _calculate_age_years(self, patient_info, order_info):
+         age_value = order_info.get('age_years') if isinstance(order_info, dict) else None
+         if age_value is not None:
+             try:
+                 return int(age_value)
+             except (TypeError, ValueError):
+                 age_value = None
+         if age_value is None:
+             birth_date = patient_info.get('birth_date') if isinstance(patient_info, dict) else None
+             if birth_date:
+                 bd = QDate.fromString(birth_date, "yyyy-MM-dd")
+                 if bd.isValid():
+                     age_value = bd.daysTo(QDate.currentDate()) // 365
+         return age_value
+     def _format_age_text(self, patient_info, order_info):
+         age_value = self._calculate_age_years(patient_info, order_info)
+         return f"{age_value} años" if age_value is not None else "-"
+ 
+     def _get_field_reference(self, field_def, context=None):
+         if not field_def:
+             return None
+         reference = field_def.get("reference")
+         if not reference:
+             return reference
+         effective_context = context or self.current_order_context
+@@ -3816,55 +4004,55 @@ class MainWindow(QMainWindow):
+                     line += f" ({weeks_text})"
+             else:
+                 line = 'GESTANTE: NO'
+             lines.append(line)
+             if due_raw:
+                 due_display = self._format_short_date(due_raw)
+                 if due_display == '—':
+                     due_display = due_raw
+                 lines.append(f"FPP: {due_display}")
+         lines.append(f"HISTORIA CLÍNICA: {pat.get('hcl') or '-'}")
+         lines.append(f"PROCEDENCIA: {pat.get('origin') or '-'}")
+         insurance_display = self._format_insurance_display(ord_inf.get('insurance_type'))
+         lines.append(f"SEGURO: {insurance_display}")
+         requester = ord_inf.get('requested_by') or '-'
+         lines.append(f"SOLICITANTE: {requester}")
+         emission_raw = ord_inf.get('emitted_at')
+         if emission_raw:
+             emission_display = self._format_datetime_display(emission_raw, emission_raw)
+         else:
+             emission_display = "Pendiente de emisión"
+         lines.append(f"FECHA DEL INFORME: {emission_display}")
+         sample_raw = ord_inf.get('sample_date')
+         sample_display = self._format_date_display(sample_raw, "-")
+         lines.append(f"FECHA DE TOMA DE MUESTRA: {sample_display}")
+         lines.append("RESULTADOS:")
+-        for test_name, raw_result, _, sample_status, sample_issue, observation, _ in results:
++        for test_name, raw_result, _, sample_status, sample_issue, observation, _, pending_since in results:
+             formatted_lines = self._format_result_lines(test_name, raw_result, context=context)
+             if formatted_lines:
+                 lines.extend(formatted_lines)
+-            status_text = self._format_sample_status_text(sample_status, sample_issue)
++            status_text = self._format_sample_status_text(sample_status, sample_issue, pending_since)
+             if status_text:
+                 lines.append(f"    Estado de muestra: {status_text}")
+             if observation:
+                 lines.append(f"    Observación: {observation}")
+         if ord_inf["observations"]:
+             lines.append(f"Observaciones generales: {ord_inf['observations']}")
+         self.output_text.setPlainText("\n".join(lines))
+ 
+ 
+     def export_pdf(self):
+         data = self.combo_completed.currentData()
+         if data is None:
+             return
+         order_id = int(data)
+         info = self.labdb.get_order_details(order_id)
+         if not info:
+             QMessageBox.warning(self, "Orden no disponible", "La orden seleccionada ya no está disponible.")
+             self.populate_completed_orders()
+             return
+         ord_inf = info["order"]
+         suggested_name = f"Orden_{order_id}.pdf"
+         options = QFileDialog.Options()
+         default_path = self._ensure_output_directory("informes", suggested_name)
+         file_path, _ = QFileDialog.getSaveFileName(
+             self,
+@@ -4158,86 +4346,86 @@ class MainWindow(QMainWindow):
+         def render_section_row(label, total_width, widths, on_new_page):
+             section_height = 4.2
+             if ensure_space(section_height + 1):
+                 on_new_page()
+                 render_table_header(widths, on_new_page)
+             pdf.set_font("Arial", 'B', 6.8)
+             pdf.set_fill_color(242, 246, 253)
+             pdf.set_text_color(47, 84, 150)
+             pdf.cell(total_width, section_height, self._ensure_latin1(label), border=1, ln=1, align='L', fill=True)
+             pdf.set_text_color(0, 0, 0)
+ 
+         draw_page_header()
+ 
+         table_total_width = pdf.w - pdf.l_margin - pdf.r_margin
+         column_widths = [table_total_width * 0.38, table_total_width * 0.27, table_total_width * 0.35]
+ 
+         def draw_test_header(title):
+             ensure_space(9)
+             pdf.set_font("Arial", 'B', 8.6)
+             pdf.set_text_color(255, 255, 255)
+             pdf.set_fill_color(46, 117, 182)
+             pdf.cell(0, 6, self._ensure_latin1(title.upper()), ln=1, fill=True)
+             pdf.set_text_color(0, 0, 0)
+             pdf.ln(1.2)
+ 
+-        for test_name, raw_result, _, sample_status, sample_issue, observation, _ in results:
++        for test_name, raw_result, _, sample_status, sample_issue, observation, _, pending_since in results:
+             structure = self._extract_result_structure(test_name, raw_result, context=context)
+             if structure.get("type") == "structured":
+                 items = structure.get("items", [])
+                 if not any(item.get("type") == "value" for item in items):
+                     continue
+             else:
+                 value_text = structure.get("value", "")
+                 if isinstance(value_text, str):
+                     if value_text.strip() == "":
+                         continue
+                 elif self._is_blank_result(value_text):
+                     continue
+             draw_test_header(test_name)
+ 
+             def on_new_page():
+                 draw_test_header(test_name)
+ 
+             if structure.get("type") == "structured":
+                 render_table_header(column_widths, on_new_page)
+                 for item in structure.get("items", []):
+                     if item.get("type") == "section":
+                         render_section_row(item.get("label", ""), sum(column_widths), column_widths, on_new_page)
+                         continue
+                     row_texts = [
+                         item.get('label', ''),
+                         item.get('value', '-'),
+                         item.get('reference') or '-'
+                     ]
+                     render_table_row(row_texts, column_widths, on_new_page)
+             else:
+                 text_value = structure.get("value", "")
+                 ensure_space(6)
+                 pdf.set_font("Arial", '', 7)
+                 pdf.multi_cell(0, 4, self._ensure_latin1(text_value))
+-            status_text = self._format_sample_status_text(sample_status, sample_issue)
++            status_text = self._format_sample_status_text(sample_status, sample_issue, pending_since)
+             if status_text:
+                 ensure_space(5)
+                 pdf.set_font("Arial", 'I', 6.6)
+                 pdf.set_text_color(166, 38, 38)
+                 pdf.multi_cell(0, 3.8, self._ensure_latin1(f"Estado de muestra: {status_text}"))
+                 pdf.set_text_color(0, 0, 0)
+             if observation:
+                 ensure_space(5)
+                 pdf.set_font("Arial", 'I', 6.6)
+                 pdf.multi_cell(0, 3.8, self._ensure_latin1(f"Observación: {observation}"))
+             pdf.ln(2)
+ 
+         if ord_inf.get('observations') and str(ord_inf['observations']).strip().upper() not in {"", "N/A"}:
+             ensure_space(8)
+             pdf.set_font("Arial", 'B', 7.4)
+             pdf.cell(0, 4.2, "Observaciones generales", ln=1)
+             pdf.set_font("Arial", '', 6.9)
+             pdf.multi_cell(0, 3.6, self._ensure_latin1(ord_inf['observations']))
+             pdf.ln(1.5)
+ 
+     def export_pdf_batch(self):
+         orders = getattr(self, 'completed_orders_cache', [])
+         if not orders:
+             QMessageBox.information(self, "Sin órdenes", "No hay órdenes completadas para emitir.")
+             return

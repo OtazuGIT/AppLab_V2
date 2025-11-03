@@ -1,0 +1,266 @@
+diff --git a/database.py b/database.py
+index 11219e676dec07af93a33236965c24fb5bd6ee5e..bf32c8728b0c24f340fc4213c354b976685e44a5 100644
+--- a/database.py
++++ b/database.py
+@@ -179,50 +179,51 @@ class LabDB:
+                     "Leishmaniasis (toma de muestra)", "Dengue (toma de muestra)", "Leptospirosis (toma de muestra)",
+                     "Covid-19 (hisopado nasofaríngeo)", "Carga viral de VIH / Recuento de CD4",
+                     "CLIA (PSA, Perfil tiroideo, etc.)", "Sangre venosa/arterial (examen de proceso)"
+                 ]
+             }
+             for cat, tests in tests_by_category.items():
+                 for test in tests:
+                     self.cur.execute("INSERT INTO tests(name, category) VALUES (?,?)", (test, cat))
+             self.conn.commit()
+         # Ajustes posteriores para bases de datos existentes
+         self._ensure_test_renamed(
+             "HCG (Prueba de embarazo en orina)",
+             "BHCG (Prueba de embarazo en sangre)"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de secreción vaginal",
+             "Secreción vaginal"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de otras secreciones",
+             "Secreción (otros sitios)"
+         )
+         self._ensure_test_exists("Secreción vaginal", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Secreción (otros sitios)", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Hemoglobina - Hematocrito", "HEMATOLOGÍA")
++        self._ensure_test_exists("Parasitológico seriado", "PARASITOLOGÍA")
+         # Cargar mapa de pruebas (nombre -> id)
+         self.cur.execute("SELECT id, name FROM tests")
+         for tid, name in self.cur.fetchall():
+             self.test_map[name] = tid
+         # Ajustar columnas agregadas posteriormente
+         self._ensure_column_exists("order_tests", "sample_status", "TEXT", default_value="recibida")
+         self._ensure_column_exists("order_tests", "sample_issue", "TEXT")
+         self._ensure_column_exists("order_tests", "observation", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted", "INTEGER", default_value="0")
+         self._ensure_column_exists("order_tests", "deleted_reason", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted_by", "INTEGER")
+         self._ensure_column_exists("order_tests", "deleted_at", "TEXT")
+     def authenticate_user(self, username, password):
+         self.cur.execute(
+             "SELECT id, username, role, full_name, profession, license FROM users WHERE username=? AND password=?",
+             (username, password)
+         )
+         row = self.cur.fetchone()
+         if row:
+             uid, user, role, full_name, profession, license = row
+             return {
+                 "id": uid,
+                 "username": user,
+                 "role": role,
+                 "full_name": full_name or "",
+@@ -578,96 +579,168 @@ class LabDB:
+                 sample_issue = payload.get("sample_issue")
+                 observation = payload.get("observation")
+             if isinstance(result_value, dict):
+                 stored = json.dumps(result_value, ensure_ascii=False)
+             else:
+                 stored = result_value
+             if sample_status is None:
+                 sample_status = "recibida"
+             if sample_issue is None:
+                 sample_issue = ""
+             if observation is None:
+                 observation = ""
+             self.cur.execute(
+                 """
+                 UPDATE order_tests
+                 SET result=?,
+                     sample_status=?,
+                     sample_issue=?,
+                     observation=?
+                 WHERE order_id=? AND test_id=?
+                 """,
+                 (stored, sample_status, sample_issue, observation, order_id, tid)
+             )
+         return self._update_order_completion(order_id)
+ 
++    def ensure_followup_order_for_pending(self, source_order_id, pending_tests, user_id):
++        if not source_order_id or not pending_tests or not user_id:
++            return None
++        self.cur.execute(
++            """
++            SELECT patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years
++            FROM orders
++            WHERE id=? AND (deleted IS NULL OR deleted=0)
++            """,
++            (source_order_id,)
++        )
++        row = self.cur.fetchone()
++        if not row:
++            return None
++        patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years = row
++        normalized_tests = []
++        for name in pending_tests:
++            if not name:
++                continue
++            if name not in self.test_map:
++                self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
++                fetched = self.cur.fetchone()
++                if fetched:
++                    self.test_map[name] = fetched[0]
++            if name in self.test_map:
++                normalized_tests.append(name)
++        if not normalized_tests:
++            return None
++        tests_to_add = []
++        for test_name in normalized_tests:
++            if not self._pending_test_has_followup(patient_id, source_order_id, test_name):
++                tests_to_add.append(test_name)
++        if not tests_to_add:
++            return None
++        base_note = f"Pendiente de orden #{source_order_id}"
++        detail_note = ", ".join(tests_to_add)
++        observations = base_note if not detail_note else f"{base_note} - {detail_note}"
++        new_order_id = self.add_order_with_tests(
++            patient_id,
++            tests_to_add,
++            user_id,
++            observations=observations,
++            requested_by=requested_by or "",
++            diagnosis=diagnosis or "",
++            insurance_type=insurance_type or "SIS",
++            fua_number=fua_number,
++            age_years=age_years,
++            sample_date=None
++        )
++        return new_order_id
++
+     def remove_test_from_order(self, order_id, test_name):
+         if not test_name:
+             return False
+         if test_name not in self.test_map:
+             self.cur.execute("SELECT id FROM tests WHERE name=?", (test_name,))
+             row = self.cur.fetchone()
+             if row:
+                 self.test_map[test_name] = row[0]
+         tid = self.test_map.get(test_name)
+         if not tid:
+             return False
+         self.cur.execute("DELETE FROM order_tests WHERE order_id=? AND test_id=?", (order_id, tid))
+         if self.cur.rowcount:
+             self._update_order_completion(order_id)
+             return True
+         self.conn.commit()
+         return False
+ 
+     def _update_order_completion(self, order_id):
+         self.cur.execute(
+             """
+             SELECT result, sample_status
+             FROM order_tests
+             WHERE order_id=? AND (deleted IS NULL OR deleted=0)
+             """,
+             (order_id,)
+         )
+         rows = self.cur.fetchall()
+         if not rows:
+             completed_flag = 1
+         else:
+             pending = 0
+             for result, sample_status in rows:
+                 status = (sample_status or "recibida").strip().lower()
+                 if status == "pendiente":
+                     pending += 1
+                     continue
+                 if status == "rechazada":
+                     continue
+                 if result in (None, ""):
+                     pending += 1
+             completed_flag = 0 if pending else 1
+         self.cur.execute("UPDATE orders SET completed=? WHERE id=?", (completed_flag, order_id))
+         self.conn.commit()
+         return completed_flag
+ 
++    def _pending_test_has_followup(self, patient_id, source_order_id, test_name):
++        if not patient_id or not source_order_id or not test_name:
++            return False
++        pattern = f"%Pendiente de orden #{source_order_id}%"
++        self.cur.execute(
++            """
++            SELECT COUNT(*)
++            FROM order_tests ot
++            JOIN orders o ON ot.order_id = o.id
++            JOIN tests t ON ot.test_id = t.id
++            WHERE o.patient_id=?
++              AND (o.deleted IS NULL OR o.deleted=0)
++              AND (ot.deleted IS NULL OR ot.deleted=0)
++              AND o.observations LIKE ?
++              AND t.name=?
++            """,
++            (patient_id, pattern, test_name)
++        )
++        row = self.cur.fetchone()
++        return bool(row and row[0])
++
+     def mark_order_emitted(self, order_id, emitted_at):
+         self.cur.execute(
+             """
+             UPDATE orders
+             SET emitted=1,
+                 emitted_at=COALESCE(emitted_at, ?)
+             WHERE id=?
+             """,
+             (emitted_at, order_id)
+         )
+         self.conn.commit()
+     def get_statistics(self, start_datetime=None, end_datetime=None):
+         stats = {}
+         order_where = "WHERE (o.deleted IS NULL OR o.deleted=0)"
+         order_params = []
+         tests_where = (
+             "FROM order_tests ot "
+             "JOIN orders o ON ot.order_id = o.id "
+             "WHERE (ot.deleted IS NULL OR ot.deleted=0) "
+             "AND (o.deleted IS NULL OR o.deleted=0)"
+         )
+         tests_params = []
+         if start_datetime and end_datetime:
+             order_where += " AND datetime(o.date) BETWEEN datetime(?) AND datetime(?)"
+             order_params = [start_datetime, end_datetime]
+@@ -812,28 +885,37 @@ class LabDB:
+             SELECT o.id, o.date, o.sample_date, t.name, ot.result, t.category,
+                    p.first_name, p.last_name, p.doc_type, p.doc_number,
+                    p.sex, p.birth_date, p.hcl, p.origin, o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
+                    ot.sample_status, ot.sample_issue, ot.observation, ot.id
+             FROM orders o
+             JOIN patients p ON o.patient_id = p.id
+             JOIN order_tests ot ON ot.order_id = o.id
+             JOIN tests t ON ot.test_id = t.id
+             WHERE p.doc_number = ? AND (o.deleted IS NULL OR o.deleted=0) AND (ot.deleted IS NULL OR ot.deleted=0)
+         """
+         if doc_type:
+             query += " AND p.doc_type = ?"
+             params.append(doc_type)
+         query += " ORDER BY datetime(o.date) DESC, o.id DESC, t.name ASC"
+         self.cur.execute(query, params)
+         return self.cur.fetchall()
+ 
+     def _ensure_test_renamed(self, old_name, new_name):
+         if old_name == new_name:
+             return
+         self.cur.execute("UPDATE tests SET name=? WHERE name=?", (new_name, old_name))
+         self.conn.commit()
+ 
+     def _ensure_test_exists(self, name, category):
+         self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
+-        if not self.cur.fetchone():
+-            self.cur.execute("INSERT INTO tests(name, category) VALUES (?,?)", (name, category))
+-            self.conn.commit()
++        row = self.cur.fetchone()
++        if row:
++            if name not in self.test_map:
++                self.test_map[name] = row[0]
++            return
++        self.cur.execute("INSERT INTO tests(name, category) VALUES (?,?)", (name, category))
++        self.conn.commit()
++        if name not in self.test_map:
++            self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
++            new_row = self.cur.fetchone()
++            if new_row:
++                self.test_map[name] = new_row[0]

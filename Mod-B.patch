@@ -1,0 +1,277 @@
+diff --git a/main_window.py b/main_window.py
+index 0db4f76e4369870844b512413c26c30252da57a3..d24502824315864f3a5aef272bc163d02631fac6 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -1242,63 +1242,80 @@ class MainWindow(QMainWindow):
+             QLabel#HeaderClock {
+                 font-size: 16px;
+                 color: #0a84ff;
+                 font-weight: 600;
+             }
+             QLabel#TestCountLabel {
+                 font-weight: 700;
+                 color: #1f2d3d;
+             }
+             QWidget#TestsControlBar {
+                 background-color: rgba(46, 134, 222, 0.12);
+                 border: 1px solid #c7d7f0;
+                 border-radius: 12px;
+             }
+             QWidget#TestsControlBar QPushButton {
+                 background-color: transparent;
+                 color: #176b3a;
+                 border: 1px solid #1E8449;
+                 border-radius: 8px;
+                 padding: 6px 14px;
+             }
+             QWidget#TestsControlBar QPushButton:disabled {
+                 color: #8aa2c0;
+                 border-color: #b1c4dd;
+             }
++            QWidget#RegisterButtonBar {
++                background-color: #ffffff;
++                border: 1px solid #d7e1f0;
++                border-radius: 16px;
++            }
++            QWidget#RegisterButtonBar QPushButton {
++                min-height: 42px;
++                font-size: 14px;
++            }
+             QGroupBox {
+                 border: 1px solid #dbe4f3;
+                 border-radius: 12px;
+                 margin-top: 12px;
+                 background-color: #ffffff;
+             }
+             QGroupBox::title {
+                 subcontrol-origin: margin;
+                 left: 14px;
+                 padding: 0 6px;
+                 color: #1f2d3d;
+                 font-weight: 600;
+             }
++            QGroupBox[categoryGroup="true"] {
++                background-color: #eef4ff;
++                border-color: #b8cbea;
++            }
++            QGroupBox[categoryGroup="true"]::title {
++                color: #1c3f66;
++                font-weight: 700;
++            }
+             QLabel#OrderInfoValue {
+                 font-weight: 600;
+                 color: #1f2d3d;
+             }
+             QLineEdit, QComboBox, QTextEdit, QDateEdit, QSpinBox {
+                 border: 1px solid #cbd5e1;
+                 border-radius: 8px;
+                 padding: 6px 8px;
+                 background: #ffffff;
+             }
+             QLineEdit:focus, QComboBox:focus, QTextEdit:focus, QDateEdit:focus, QSpinBox:focus {
+                 border-color: #3584e4;
+             }
+             QPushButton {
+                 background-color: #2e86de;
+                 color: white;
+                 border-radius: 10px;
+                 padding: 10px 16px;
+                 font-weight: 600;
+             }
+             QPushButton:hover:!disabled {
+                 background-color: #1b4f72;
+             }
+             QPushButton:disabled {
+                 background-color: #c5d3e6;
+diff --git a/main_window.py b/main_window.py
+index 0db4f76e4369870844b512413c26c30252da57a3..d24502824315864f3a5aef272bc163d02631fac6 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -1389,53 +1406,65 @@ class MainWindow(QMainWindow):
+             "informes": "informes",
+             "registros": "registros",
+             "exportaciones": "exportaciones"
+         }
+         subdir = mapping.get(category, category)
+         target_dir = os.path.join(base_dir, subdir)
+         os.makedirs(target_dir, exist_ok=True)
+         if filename:
+             return os.path.join(target_dir, filename)
+         return target_dir
+ 
+     def _format_user_identity_for_delivery(self):
+         lines = []
+         full_name = (self.user.get('full_name') or '').strip()
+         profession = (self.user.get('profession') or '').strip()
+         license_code = (self.user.get('license') or '').strip()
+         if full_name:
+             lines.append(full_name)
+         credentials = " / ".join(part for part in (profession, license_code) if part)
+         if credentials:
+             lines.append(credentials)
+         if not lines:
+             lines.append(self.user.get('username', ''))
+         return "\n".join(lines)
+     def init_registro_page(self):
+-        layout = QVBoxLayout(self.page_registro)
++        page_layout = QVBoxLayout(self.page_registro)
++        page_layout.setContentsMargins(0, 0, 0, 0)
++        page_layout.setSpacing(20)
++
++        scroll_area = QScrollArea()
++        scroll_area.setWidgetResizable(True)
++        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
++        page_layout.addWidget(scroll_area, 1)
++
++        scroll_content = QWidget()
++        scroll_area.setWidget(scroll_content)
++        layout = QVBoxLayout(scroll_content)
+         layout.setContentsMargins(0, 0, 0, 0)
+         layout.setSpacing(24)
++
+         top_layout = QHBoxLayout()
+         top_layout.setSpacing(24)
+         # Formulario de datos del paciente
+         form_layout = QFormLayout()
+         form_layout.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+         form_layout.setFormAlignment(Qt.AlignTop)
+         self.input_doc_type = QComboBox(); self.input_doc_type.addItems(["DNI", "Carnet Ext.", "Pasaporte"])
+         self.input_doc_number = QLineEdit()
+         btn_search = QPushButton("Buscar"); btn_search.setFixedWidth(60)
+         btn_search.clicked.connect(self.autofill_patient)
+         doc_hlayout = QHBoxLayout()
+         doc_hlayout.addWidget(self.input_doc_type); doc_hlayout.addWidget(self.input_doc_number); doc_hlayout.addWidget(btn_search)
+         form_layout.addRow("Documento:", doc_hlayout)
+         self.input_first_name = QLineEdit(); form_layout.addRow("Nombre:", self.input_first_name)
+         self.input_last_name = QLineEdit(); form_layout.addRow("Apellidos:", self.input_last_name)
+         # Fecha de nacimiento y edad calculada automáticamente (editable)
+         self.input_birth_date = QDateEdit()
+         self.input_birth_date.setDisplayFormat("dd/MM/yyyy")
+         self.input_birth_date.setCalendarPopup(True)
+         self.input_birth_date.setDate(QDate.currentDate())
+         self.input_birth_date.dateChanged.connect(self.update_age_from_birth_date)
+         form_layout.addRow("F. Nacimiento:", self.input_birth_date)
+         self.input_age = QLineEdit()
+         self.input_age.setPlaceholderText("Edad estimada")
+         form_layout.addRow("Edad:", self.input_age)
+diff --git a/main_window.py b/main_window.py
+index 0db4f76e4369870844b512413c26c30252da57a3..d24502824315864f3a5aef272bc163d02631fac6 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -1513,101 +1542,113 @@ class MainWindow(QMainWindow):
+         self.sample_date_edit.setDisplayFormat("dd/MM/yyyy")
+         self.sample_date_edit.setCalendarPopup(True)
+         self.sample_date_edit.setDate(QDate.currentDate())
+         self.sample_today_checkbox = QCheckBox("Hoy")
+         self.sample_today_checkbox.setChecked(True)
+         self.sample_today_checkbox.stateChanged.connect(self.on_sample_today_toggle)
+         self.sample_date_edit.setEnabled(False)
+         sample_layout = QHBoxLayout()
+         sample_layout.addWidget(self.sample_date_edit)
+         sample_layout.addWidget(self.sample_today_checkbox)
+         sample_layout.addStretch()
+         form_layout.addRow("F. muestra:", sample_layout)
+         self.input_requested_by = QComboBox()
+         self.input_requested_by.setEditable(True)
+         self.input_requested_by.setInsertPolicy(QComboBox.NoInsert)
+         self.input_requested_by.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+         form_layout.addRow("Solicitante:", self.input_requested_by)
+         # Placeholder después de crear el combo editable
+         if self.input_requested_by.lineEdit():
+             self.input_requested_by.lineEdit().setPlaceholderText("Seleccione o escriba el médico solicitante")
+         self.populate_requesters()
+         top_layout.addLayout(form_layout, 2)
+         # Listado de pruebas por categoría (con scroll)
+         tests_scroll = QScrollArea(); tests_scroll.setWidgetResizable(True)
+         tests_container = QWidget(); tests_layout = QVBoxLayout(tests_container)
++        tests_layout.setContentsMargins(0, 0, 0, 0)
++        tests_layout.setSpacing(16)
+         self.test_checkboxes = []
+         tests_controls_widget = QWidget()
+         tests_controls_widget.setObjectName("TestsControlBar")
+         tests_controls_layout = QHBoxLayout(tests_controls_widget)
+         tests_controls_layout.setContentsMargins(16, 12, 16, 12)
+         tests_controls_layout.setSpacing(12)
+         self.test_selection_count_label = QLabel("Pruebas seleccionadas: 0")
+         self.test_selection_count_label.setObjectName("TestCountLabel")
+         tests_controls_layout.addWidget(self.test_selection_count_label)
+         tests_controls_layout.addStretch()
+         self.clear_tests_button = QPushButton("Borrar todas las pruebas")
+         self.clear_tests_button.setToolTip("Desmarca todas las pruebas seleccionadas")
+         self.clear_tests_button.clicked.connect(self.clear_selected_tests)
+         tests_controls_layout.addWidget(self.clear_tests_button)
+         # Obtener pruebas agrupadas por categoría de la BD
+         categories = {}
+         self.labdb.cur.execute("SELECT category, name FROM tests")
+         for cat, name in self.labdb.cur.fetchall():
+             categories.setdefault(cat, []).append(name)
+         for cat, tests in categories.items():
+             group_box = QGroupBox(cat)
++            group_box.setProperty("categoryGroup", True)
+             group_layout = QVBoxLayout()
++            group_layout.setContentsMargins(16, 12, 16, 16)
++            group_layout.setSpacing(8)
+             for test_name in tests:
+                 cb = QCheckBox(test_name)
+                 group_layout.addWidget(cb)
+                 self.test_checkboxes.append(cb)
+                 cb.toggled.connect(self.update_test_selection_count)
+             group_box.setLayout(group_layout)
+             tests_layout.addWidget(group_box)
+         tests_layout.addStretch()
+         tests_scroll.setWidget(tests_container)
+         tests_panel = QWidget()
+         tests_panel_layout = QVBoxLayout(tests_panel)
+         tests_panel_layout.setContentsMargins(0, 0, 0, 0)
+         tests_panel_layout.setSpacing(16)
+         tests_panel_layout.addWidget(tests_controls_widget)
+         tests_panel_layout.addWidget(tests_scroll)
+         top_layout.addWidget(tests_panel, 3)
+         layout.addLayout(top_layout)
++        layout.addStretch()
+         self.update_test_selection_count()
+         # Botones de acción
+         btn_register = QPushButton("Registrar paciente y pruebas")
+         btn_new = QPushButton("Registrar nuevo paciente")
+         btn_to_results = QPushButton("Anotar resultado de este paciente")
+         btn_to_results.setEnabled(False)
+         btn_register.clicked.connect(lambda: self.register_patient(btn_to_results))
+         btn_new.clicked.connect(self.clear_registration_form)
+         btn_to_results.clicked.connect(self.go_to_results)
+-        btns_layout = QHBoxLayout()
+-        btns_layout.addWidget(btn_register); btns_layout.addWidget(btn_new); btns_layout.addWidget(btn_to_results)
+-        layout.addLayout(btns_layout)
++        button_bar = QWidget()
++        button_bar.setObjectName("RegisterButtonBar")
++        btns_layout = QHBoxLayout(button_bar)
++        btns_layout.setContentsMargins(20, 16, 20, 16)
++        btns_layout.setSpacing(16)
++        btns_layout.addWidget(btn_register)
++        btns_layout.addWidget(btn_new)
++        btns_layout.addWidget(btn_to_results)
++        page_layout.addWidget(button_bar, 0)
+     def populate_requesters(self, keep_current=False):
+         current_text = self.input_requested_by.currentText().strip() if keep_current else ""
+         items_lower = set()
+         self.input_requested_by.blockSignals(True)
+         self.input_requested_by.clear()
+         self.input_requested_by.addItem("N/A")
+         for requester in self.labdb.get_distinct_requesters():
+             clean = requester.strip()
+             if clean and clean.lower() not in ("n/a", "na"):
+                 self.input_requested_by.addItem(clean)
+                 items_lower.add(clean.lower())
+         self.input_requested_by.blockSignals(False)
+         if keep_current and current_text:
+             idx = self.input_requested_by.findText(current_text)
+             if idx == -1 and current_text.lower() not in items_lower:
+                 self.input_requested_by.addItem(current_text)
+                 idx = self.input_requested_by.count() - 1
+             if idx >= 0:
+                 self.input_requested_by.setCurrentIndex(idx)
+         else:
+             self.input_requested_by.setCurrentIndex(0)
+         if self.input_requested_by.lineEdit():
+             if self.input_requested_by.currentIndex() <= 0:
+                 self.input_requested_by.lineEdit().clear()
+             else:

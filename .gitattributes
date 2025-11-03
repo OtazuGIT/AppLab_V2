@@ -1,0 +1,44 @@
+# ============================================
+# 🔧 CONFIGURACIÓN GENERAL
+# Mantiene LF como fin de línea en todos los archivos
+# Evita que Git convierta a CRLF en Windows
+# ============================================
+* text eol=lf
+
+# ============================================
+# 📂 ARCHIVOS DE CÓDIGO
+# ============================================
+*.py     text eol=lf
+*.sh     text eol=lf
+*.js     text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+
+# ============================================
+# 🧠 ARCHIVOS DE PARCHE / DIFF (Codex, etc.)
+# Mantener exactos los saltos de línea y bytes
+# ============================================
+*.patch  -text
+*.diff   -text
+
+# ============================================
+# 📊 DATOS / DOCUMENTOS
+# CSV y TSV se tratan como texto LF (no binario)
+# ============================================
+*.csv    text eol=lf
+*.tsv    text eol=lf
+
+# ============================================
+# 🖼️ ARCHIVOS BINARIOS
+# Git no debe intentar convertirlos ni compararlos como texto
+# ============================================
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.svg    binary
+*.pdf    binary
+*.zip    binary
+*.exe    binary
+*.dll    binary

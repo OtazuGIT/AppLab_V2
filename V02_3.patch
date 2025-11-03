@@ -1,0 +1,339 @@
+diff --git a/database.py b/database.py
+index bf32c8728b0c24f340fc4213c354b976685e44a5..737b0a3564ee3f18bd31d98dcb4bc1c35e909855 100644
+--- a/database.py
++++ b/database.py
+@@ -1,26 +1,27 @@
+ # database.py
++import datetime
+ import json
+ import sqlite3
+ from collections import OrderedDict
+ class LabDB:
+     def __init__(self, db_path="lab_db.sqlite"):
+         self.db_path = db_path
+         self.conn = None
+         self.cur = None
+         self.test_map = {}
+     def connect(self):
+         self.conn = sqlite3.connect(self.db_path)
+         self.cur = self.conn.cursor()
+         self.cur.execute("PRAGMA foreign_keys = ON")
+         self.conn.commit()
+     def init_db(self):
+         # Crear tablas
+         self.cur.execute("""
+             CREATE TABLE IF NOT EXISTS users (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 username TEXT UNIQUE,
+                 password TEXT,
+                 role TEXT
+             )
+         """)
+         self._ensure_column_exists("users", "full_name", "TEXT")
+@@ -188,50 +189,51 @@ class LabDB:
+         # Ajustes posteriores para bases de datos existentes
+         self._ensure_test_renamed(
+             "HCG (Prueba de embarazo en orina)",
+             "BHCG (Prueba de embarazo en sangre)"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de secreción vaginal",
+             "Secreción vaginal"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de otras secreciones",
+             "Secreción (otros sitios)"
+         )
+         self._ensure_test_exists("Secreción vaginal", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Secreción (otros sitios)", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Hemoglobina - Hematocrito", "HEMATOLOGÍA")
+         self._ensure_test_exists("Parasitológico seriado", "PARASITOLOGÍA")
+         # Cargar mapa de pruebas (nombre -> id)
+         self.cur.execute("SELECT id, name FROM tests")
+         for tid, name in self.cur.fetchall():
+             self.test_map[name] = tid
+         # Ajustar columnas agregadas posteriormente
+         self._ensure_column_exists("order_tests", "sample_status", "TEXT", default_value="recibida")
+         self._ensure_column_exists("order_tests", "sample_issue", "TEXT")
+         self._ensure_column_exists("order_tests", "observation", "TEXT")
++        self._ensure_column_exists("order_tests", "pending_since", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted", "INTEGER", default_value="0")
+         self._ensure_column_exists("order_tests", "deleted_reason", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted_by", "INTEGER")
+         self._ensure_column_exists("order_tests", "deleted_at", "TEXT")
+     def authenticate_user(self, username, password):
+         self.cur.execute(
+             "SELECT id, username, role, full_name, profession, license FROM users WHERE username=? AND password=?",
+             (username, password)
+         )
+         row = self.cur.fetchone()
+         if row:
+             uid, user, role, full_name, profession, license = row
+             return {
+                 "id": uid,
+                 "username": user,
+                 "role": role,
+                 "full_name": full_name or "",
+                 "profession": profession or "",
+                 "license": license or ""
+             }
+         else:
+             return None
+     def create_user(self, username, password, role, full_name="", profession="", license=""):
+         try:
+             self.cur.execute(
+@@ -474,50 +476,82 @@ class LabDB:
+                 deleted_by=?,
+                 deleted_at=?
+             WHERE id=?
+             """,
+             (reason or "", user_id, timestamp, order_test_id)
+         )
+         if not self.cur.rowcount:
+             return False
+         self.conn.commit()
+         self.cur.execute("SELECT order_id FROM order_tests WHERE id=?", (order_test_id,))
+         row = self.cur.fetchone()
+         if row:
+             self._update_order_completion(row[0])
+         return True
+ 
+     def get_pending_orders(self):
+         self.cur.execute("""
+             SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number
+             FROM orders o
+             JOIN patients p ON o.patient_id=p.id
+             WHERE o.completed=0 AND (o.deleted IS NULL OR o.deleted=0)
+             ORDER BY o.date ASC, o.id ASC
+         """)
+         return self.cur.fetchall()
+ 
++    def count_pending_tests(self):
++        self.cur.execute("""
++            SELECT COUNT(*)
++            FROM order_tests ot
++            JOIN orders o ON ot.order_id = o.id
++            WHERE ot.sample_status='pendiente'
++              AND (ot.deleted IS NULL OR ot.deleted=0)
++              AND (o.deleted IS NULL OR o.deleted=0)
++        """)
++        row = self.cur.fetchone()
++        return row[0] if row else 0
++
++    def get_pending_tests_overview(self):
++        self.cur.execute("""
++            SELECT o.id, t.name, p.first_name, p.last_name, p.doc_type, p.doc_number,
++                   ot.pending_since, ot.sample_issue, o.sample_date, o.date
++            FROM order_tests ot
++            JOIN orders o ON ot.order_id = o.id
++            JOIN patients p ON o.patient_id = p.id
++            JOIN tests t ON ot.test_id = t.id
++            WHERE ot.sample_status='pendiente'
++              AND (ot.deleted IS NULL OR ot.deleted=0)
++              AND (o.deleted IS NULL OR o.deleted=0)
++            ORDER BY
++                CASE WHEN ot.pending_since IS NOT NULL THEN datetime(ot.pending_since)
++                     ELSE datetime(o.date)
++                END ASC,
++                o.id ASC,
++                t.name ASC
++        """)
++        return self.cur.fetchall()
++
+     def get_completed_orders(self, include_emitted=False):
+         if include_emitted:
+             self.cur.execute("""
+                 SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number, o.emitted, o.emitted_at
+                 FROM orders o
+                 JOIN patients p ON o.patient_id=p.id
+                 WHERE o.completed=1 AND (o.deleted IS NULL OR o.deleted=0)
+                 ORDER BY o.date ASC, o.id ASC
+             """)
+         else:
+             self.cur.execute("""
+                 SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number, o.emitted, o.emitted_at
+                 FROM orders o
+                 JOIN patients p ON o.patient_id=p.id
+                 WHERE o.completed=1 AND (o.emitted IS NULL OR o.emitted=0)
+                   AND (o.deleted IS NULL OR o.deleted=0)
+                 ORDER BY o.date ASC, o.id ASC
+             """)
+         return self.cur.fetchall()
+     def get_order_details(self, order_id):
+         self.cur.execute("""
+             SELECT p.first_name, p.last_name, p.doc_type, p.doc_number, p.birth_date, p.sex, p.origin, p.hcl,
+                    p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
+                    o.date, o.sample_date, o.observations, o.requested_by, o.diagnosis, o.insurance_type, o.fua_number, o.age_years, o.emitted, o.emitted_at
+             FROM orders o
+@@ -533,93 +567,102 @@ class LabDB:
+         patient_info = {
+             "name": f"{(first_name or '').upper()} {(last_name or '').upper()}".strip(),
+             "doc_type": doc_type,
+             "doc_number": doc_number,
+             "birth_date": birth_date,
+             "sex": sex,
+             "origin": origin,
+             "hcl": hcl,
+             "is_pregnant": bool(is_pregnant) if is_pregnant not in (None, "") else False,
+             "gestational_age_weeks": gest_age_weeks,
+             "expected_delivery_date": expected_delivery
+         }
+         order_info = {
+             "date": date,
+             "sample_date": sample_date,
+             "observations": obs,
+             "requested_by": req_by,
+             "diagnosis": diag,
+             "insurance_type": insurance_type,
+             "fua_number": fua_number,
+             "age_years": age_years,
+             "emitted": emitted,
+             "emitted_at": emitted_at,
+         }
+         self.cur.execute("""
+-            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.id
++            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.id, ot.pending_since
+             FROM order_tests ot
+             JOIN tests t ON ot.test_id = t.id
+             WHERE ot.order_id = ?
+               AND (ot.deleted IS NULL OR ot.deleted=0)
+             ORDER BY ot.id ASC
+         """, (order_id,))
+         results = self.cur.fetchall()
+         return {"patient": patient_info, "order": order_info, "results": results}
+     def save_results(self, order_id, results_dict):
+         for name, payload in results_dict.items():
+             if name not in self.test_map:
+                 continue
+             tid = self.test_map[name]
+             result_value = payload
+             sample_status = None
+             sample_issue = None
+             observation = None
+             if isinstance(payload, dict) and "result" in payload:
+                 result_value = payload.get("result")
+                 sample_status = payload.get("sample_status")
+                 sample_issue = payload.get("sample_issue")
+                 observation = payload.get("observation")
++                pending_since = payload.get("pending_since")
++            else:
++                pending_since = None
+             if isinstance(result_value, dict):
+                 stored = json.dumps(result_value, ensure_ascii=False)
+             else:
+                 stored = result_value
+             if sample_status is None:
+                 sample_status = "recibida"
+             if sample_issue is None:
+                 sample_issue = ""
+             if observation is None:
+                 observation = ""
++            if sample_status != "pendiente":
++                pending_since = None
++            else:
++                if not pending_since:
++                    pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+             self.cur.execute(
+                 """
+                 UPDATE order_tests
+                 SET result=?,
+                     sample_status=?,
+                     sample_issue=?,
+-                    observation=?
++                    observation=?,
++                    pending_since=?
+                 WHERE order_id=? AND test_id=?
+                 """,
+-                (stored, sample_status, sample_issue, observation, order_id, tid)
++                (stored, sample_status, sample_issue, observation, pending_since, order_id, tid)
+             )
+         return self._update_order_completion(order_id)
+ 
+     def ensure_followup_order_for_pending(self, source_order_id, pending_tests, user_id):
+         if not source_order_id or not pending_tests or not user_id:
+             return None
+         self.cur.execute(
+             """
+             SELECT patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years
+             FROM orders
+             WHERE id=? AND (deleted IS NULL OR deleted=0)
+             """,
+             (source_order_id,)
+         )
+         row = self.cur.fetchone()
+         if not row:
+             return None
+         patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years = row
+         normalized_tests = []
+         for name in pending_tests:
+             if not name:
+                 continue
+             if name not in self.test_map:
+                 self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
+                 fetched = self.cur.fetchone()
+@@ -661,61 +704,58 @@ class LabDB:
+             if row:
+                 self.test_map[test_name] = row[0]
+         tid = self.test_map.get(test_name)
+         if not tid:
+             return False
+         self.cur.execute("DELETE FROM order_tests WHERE order_id=? AND test_id=?", (order_id, tid))
+         if self.cur.rowcount:
+             self._update_order_completion(order_id)
+             return True
+         self.conn.commit()
+         return False
+ 
+     def _update_order_completion(self, order_id):
+         self.cur.execute(
+             """
+             SELECT result, sample_status
+             FROM order_tests
+             WHERE order_id=? AND (deleted IS NULL OR deleted=0)
+             """,
+             (order_id,)
+         )
+         rows = self.cur.fetchall()
+         if not rows:
+             completed_flag = 1
+         else:
+-            pending = 0
++            missing_results = 0
+             for result, sample_status in rows:
+                 status = (sample_status or "recibida").strip().lower()
+-                if status == "pendiente":
+-                    pending += 1
+-                    continue
+-                if status == "rechazada":
++                if status in {"pendiente", "rechazada"}:
+                     continue
+                 if result in (None, ""):
+-                    pending += 1
+-            completed_flag = 0 if pending else 1
++                    missing_results += 1
++            completed_flag = 0 if missing_results else 1
+         self.cur.execute("UPDATE orders SET completed=? WHERE id=?", (completed_flag, order_id))
+         self.conn.commit()
+         return completed_flag
+ 
+     def _pending_test_has_followup(self, patient_id, source_order_id, test_name):
+         if not patient_id or not source_order_id or not test_name:
+             return False
+         pattern = f"%Pendiente de orden #{source_order_id}%"
+         self.cur.execute(
+             """
+             SELECT COUNT(*)
+             FROM order_tests ot
+             JOIN orders o ON ot.order_id = o.id
+             JOIN tests t ON ot.test_id = t.id
+             WHERE o.patient_id=?
+               AND (o.deleted IS NULL OR o.deleted=0)
+               AND (ot.deleted IS NULL OR ot.deleted=0)
+               AND o.observations LIKE ?
+               AND t.name=?
+             """,
+             (patient_id, pattern, test_name)
+         )
+         row = self.cur.fetchone()
+         return bool(row and row[0])
+ 
