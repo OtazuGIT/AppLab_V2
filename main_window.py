@@ -31,6 +31,7 @@ CATEGORY_DISPLAY_ORDER = [
     "PARASITOLOGÍA",
     "MICROBIOLOGÍA",
     "MICROSCOPÍA",
+    "LABORATORIO REFERENCIAL",
     "OTROS",
     "TOMA DE MUESTRA"
 ]
@@ -902,6 +903,12 @@ SIMPLE_TEXTAREA_TESTS = {
         "label": "Antibiograma",
         "reference": "Interpretar según guías CLSI/EUCAST",
         "placeholder": "Antibiótico - Interpretación (S/I/R)"
+    },
+    "BK (resultado referencial)": {
+        "key": "resultado",
+        "label": "Resultado BK",
+        "reference": "Describa gradación (Negativo, 1+, 2+, 3+) u observaciones del informe referencial",
+        "placeholder": "Ej. Negativo / BK 1+"
     }
 }
 
@@ -925,7 +932,10 @@ BOOL_TESTS = {
         "reference": "No reactivo"
     },
     "Proteína C reactiva (PCR) - Látex": {"positive_text": "Reactivo", "negative_text": "No reactivo", "reference": "No reactivo"},
-    "BHCG (Prueba de embarazo en sangre)": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo (<5 mUI/mL)"}
+    "BHCG (Prueba de embarazo en sangre)": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo (<5 mUI/mL)"},
+    "Serología Dengue (referencial)": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"},
+    "Serología Leptospira (referencial)": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"},
+    "Serología Leishmaniasis (referencial)": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"}
 }
 
 SAMPLE_TEMPLATES = {
@@ -3410,6 +3420,8 @@ class MainWindow(QMainWindow):
             return "biochemistry"
         if normalized in {"MICROBIOLOGÍA", "PARASITOLOGÍA", "MICROSCOPÍA"}:
             return "micro_parasito"
+        if normalized == "LABORATORIO REFERENCIAL":
+            return "others"
         return "others"
 
     def _aggregate_results_by_order(self, records):
@@ -3456,7 +3468,8 @@ class MainWindow(QMainWindow):
                     "emitted": record.get("emitted"),
                     "emitted_at": record.get("emitted_at"),
                     "groups": {key: [] for key in group_keys},
-                    "tests": []
+                    "tests": [],
+                    "sample_statuses": []
                 }
                 grouped[order_id] = entry
             group_key = self._map_category_group(record.get("category"))
@@ -3469,6 +3482,13 @@ class MainWindow(QMainWindow):
                 test_clean = str(test_name).strip()
                 if test_clean and test_clean not in entry.setdefault("tests", []):
                     entry["tests"].append(test_clean)
+            status_info = {
+                "test": record.get("test"),
+                "status": record.get("sample_status"),
+                "issue": record.get("sample_issue"),
+                "pending_since": record.get("pending_since"),
+            }
+            entry.setdefault("sample_statuses", []).append(status_info)
         for entry in grouped.values():
             obs_text = entry.get("observations")
             if obs_text:
@@ -3617,6 +3637,63 @@ class MainWindow(QMainWindow):
         if note:
             return f"{base} - {note}"
         return base
+
+    def _format_history_sample_status(self, entry):
+        statuses = entry.get("sample_statuses") or []
+        parts = []
+        for status_info in statuses:
+            text = self._format_sample_status_text(
+                status_info.get("status"),
+                status_info.get("issue"),
+                status_info.get("pending_since")
+            )
+            if not text:
+                text = "Recibida"
+            test_name = status_info.get("test")
+            if test_name:
+                parts.append(f"{test_name}: {text}")
+            else:
+                parts.append(text)
+        return "\n".join(parts) if parts else "-"
+
+    def _format_history_gestation(self, entry):
+        display = self._format_registry_pregnancy_line(entry)
+        return display if display else "-"
+
+    def _build_history_row_values(self, entry):
+        return [
+            self._format_date_for_registry(entry),
+            str(entry.get("order_id", "-")),
+            entry.get("patient", "-"),
+            entry.get("document", "-"),
+            self._format_birth_for_history(entry.get("birth_date")),
+            entry.get("age", "-"),
+            self._format_history_gestation(entry),
+            self._format_sex_display(entry.get("sex")),
+            entry.get("origin", "-") or "-",
+            entry.get("hcl", "-") or "-",
+            self._format_insurance_display(entry.get("insurance_type")),
+            self._format_fua_display(entry),
+            self._format_history_sample_status(entry),
+            "\n  ".join(entry.get("groups", {}).get("hematology", [])) or "-",
+            "\n  ".join(entry.get("groups", {}).get("biochemistry", [])) or "-",
+            "\n  ".join(entry.get("groups", {}).get("micro_parasito", [])) or "-",
+            "\n  ".join(entry.get("groups", {}).get("others", [])) or "-",
+            self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
+        ]
+
+    def _populate_history_table_widget(self, table_widget, aggregated):
+        headers = getattr(self, 'history_headers', [])
+        if not headers or not isinstance(aggregated, list):
+            return
+        table_widget.setRowCount(len(aggregated))
+        for row_idx, entry in enumerate(aggregated):
+            values = self._build_history_row_values(entry)
+            for col_idx, value in enumerate(values):
+                item = QTableWidgetItem(str(value))
+                if headers[col_idx] in {"Orden", "Edad", "F. Nacimiento", "Sexo", "Tipo de seguro", "FUA", "Gestación"}:
+                    item.setTextAlignment(Qt.AlignCenter)
+                table_widget.setItem(row_idx, col_idx, item)
     def _calculate_age_years(self, patient_info, order_info):
         age_value = order_info.get('age_years') if isinstance(order_info, dict) else None
         if age_value is not None:
@@ -4718,13 +4795,17 @@ class MainWindow(QMainWindow):
         self.activity_table.horizontalHeader().setStretchLastSection(True)
         self.activity_table.setSelectionMode(QTableWidget.MultiSelection)
         layout.addWidget(self.activity_table)
-        history_group = QGroupBox("Historial por DNI")
+        history_group = QGroupBox("Historial de pacientes")
         history_layout = QVBoxLayout(history_group)
         history_search_layout = QHBoxLayout()
         history_search_layout.addWidget(QLabel("DNI:"))
         self.history_doc_input = QLineEdit()
         self.history_doc_input.setPlaceholderText("Ingrese DNI")
         history_search_layout.addWidget(self.history_doc_input)
+        history_search_layout.addWidget(QLabel("Apellidos:"))
+        self.history_lastname_input = QLineEdit()
+        self.history_lastname_input.setPlaceholderText("Ej. PEREZ / PEREZ GARCIA")
+        history_search_layout.addWidget(self.history_lastname_input)
         self.history_search_btn = QPushButton("Buscar")
         history_search_layout.addWidget(self.history_search_btn)
         self.history_open_btn = QPushButton("Ver en emisión")
@@ -4733,6 +4814,9 @@ class MainWindow(QMainWindow):
         self.history_fua_btn = QPushButton("Registrar FUA")
         self.history_fua_btn.setEnabled(False)
         history_search_layout.addWidget(self.history_fua_btn)
+        self.history_window_btn = QPushButton("Ventana de historial")
+        self.history_window_btn.setEnabled(False)
+        history_search_layout.addWidget(self.history_window_btn)
         history_search_layout.addStretch()
         history_layout.addLayout(history_search_layout)
         history_headers = [
@@ -4742,11 +4826,13 @@ class MainWindow(QMainWindow):
             "Documento",
             "F. Nacimiento",
             "Edad",
+            "Gestación",
             "Sexo",
             "Procedencia",
             "HCL",
             "Tipo de seguro",
             "FUA",
+            "Seguimiento",
             "Hematología",
             "Bioquímica",
             "Micro/Parasitología",
@@ -4761,6 +4847,7 @@ class MainWindow(QMainWindow):
         self.history_table.setWordWrap(True)
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.horizontalHeader().setStretchLastSection(True)
+        self.history_headers = history_headers
         self.history_column_map = {header: idx for idx, header in enumerate(history_headers)}
         history_layout.addWidget(self.history_table)
         layout.addWidget(history_group)
@@ -4780,10 +4867,12 @@ class MainWindow(QMainWindow):
         self._stats_controls_ready = True
         self._update_stats_period_controls()
         self.history_doc_input.returnPressed.connect(self.search_patient_history)
+        self.history_lastname_input.returnPressed.connect(self.search_patient_history)
         self.history_search_btn.clicked.connect(self.search_patient_history)
         self.history_open_btn.clicked.connect(self.open_history_order_from_analysis)
         self.history_table.itemSelectionChanged.connect(self._on_history_selection_changed)
         self.history_fua_btn.clicked.connect(self.edit_history_fua)
+        self.history_window_btn.clicked.connect(self.open_history_window)
     def refresh_statistics(self):
         if not getattr(self, '_stats_controls_ready', False):
             return
@@ -5479,6 +5568,8 @@ class MainWindow(QMainWindow):
         self._history_results = []
         if hasattr(self, 'history_open_btn'):
             self.history_open_btn.setEnabled(False)
+        if hasattr(self, 'history_window_btn'):
+            self.history_window_btn.setEnabled(False)
 
     def _on_history_selection_changed(self):
         if not hasattr(self, 'history_table'):
@@ -5510,14 +5601,15 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'history_table'):
             return
         doc_number = self.history_doc_input.text().strip() if hasattr(self, 'history_doc_input') else ""
-        if doc_number == "":
-            QMessageBox.warning(self, "DNI requerido", "Ingrese un DNI para realizar la búsqueda.")
+        last_name = self.history_lastname_input.text().strip() if hasattr(self, 'history_lastname_input') else ""
+        if doc_number == "" and last_name == "":
+            QMessageBox.warning(self, "Filtro requerido", "Ingrese un DNI o apellidos para realizar la búsqueda.")
             return
-        if not doc_number.isdigit():
+        if doc_number and not doc_number.isdigit():
             QMessageBox.warning(self, "Formato inválido", "El DNI debe contener solo números.")
             return
         self._clear_history_table()
-        rows = self.labdb.get_patient_history_by_document(doc_number, "DNI")
+        rows = self.labdb.get_patient_history(doc_number=doc_number or None, doc_type="DNI" if doc_number else None, last_name=last_name or None)
         records = []
         for row in rows:
             (
@@ -5528,13 +5620,16 @@ class MainWindow(QMainWindow):
                 raw_result,
                 category,
                 first_name,
-                last_name,
+                patient_last_name,
                 doc_type,
                 doc_value,
                 sex,
                 birth_date,
                 hcl,
                 origin,
+                is_pregnant,
+                gest_age_weeks,
+                expected_delivery,
                 age_years,
                 order_obs,
                 insurance_type,
@@ -5544,12 +5639,13 @@ class MainWindow(QMainWindow):
                 sample_status,
                 sample_issue,
                 observation,
+                pending_since,
                 entry_id
             ) = row
             display_date = self._format_date_display(sample_date_str, "-")
             if display_date == "-":
                 display_date = self._format_datetime_display(date_str, date_str or "-")
-            patient_name = " ".join(part for part in [(first_name or "").upper(), (last_name or "").upper()] if part).strip() or "-"
+            patient_name = " ".join(part for part in [(first_name or "").upper(), (patient_last_name or "").upper()] if part).strip() or "-"
             doc_text = " ".join(part for part in (doc_type, doc_value) if part).strip() or "-"
             age_display = str(age_years) if age_years not in (None, "") else "-"
             context = {
@@ -5574,6 +5670,9 @@ class MainWindow(QMainWindow):
                 "hcl": hcl,
                 "sex": sex,
                 "origin": origin,
+                "is_pregnant": is_pregnant,
+                "gestational_age_weeks": gest_age_weeks,
+                "expected_delivery_date": expected_delivery,
                 "age": age_display,
                 "test": test_name,
                 "result": result_text,
@@ -5585,59 +5684,52 @@ class MainWindow(QMainWindow):
                 "emitted": emitted,
                 "emitted_at": emitted_at,
                 "first_name": first_name,
-                "last_name": last_name,
+                "last_name": patient_last_name,
                 "sample_status": sample_status,
                 "sample_issue": sample_issue,
-                "observation": observation
+                "observation": observation,
+                "pending_since": pending_since
             })
         aggregated = self._aggregate_results_by_order(records)
         self._history_results = aggregated
-        self.history_table.setRowCount(len(aggregated))
-        headers = [
-            "date",
-            "order_id",
-            "patient",
-            "document",
-            "birth",
-            "age",
-            "sex",
-            "origin",
-            "hcl",
-            "insurance",
-            "fua",
-            "hematology",
-            "biochemistry",
-            "micro_parasito",
-            "others",
-            "emitted"
-        ]
-        for row_idx, entry in enumerate(aggregated):
-            values = [
-                self._format_date_for_registry(entry),
-                str(entry.get("order_id", "-")),
-                entry.get("patient", "-"),
-                entry.get("document", "-"),
-                self._format_birth_for_history(entry.get("birth_date")),
-                entry.get("age", "-"),
-                self._format_sex_display(entry.get("sex")),
-                entry.get("origin", "-") or "-",
-                entry.get("hcl", "-") or "-",
-                self._format_insurance_display(entry.get("insurance_type")),
-                self._format_fua_display(entry),
-                "\n  ".join(entry.get("groups", {}).get("hematology", [])) or "-",
-                "\n  ".join(entry.get("groups", {}).get("biochemistry", [])) or "-",
-                "\n  ".join(entry.get("groups", {}).get("micro_parasito", [])) or "-",
-                "\n  ".join(entry.get("groups", {}).get("others", [])) or "-",
-                self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
-            ]
-            for col_idx, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
-                if headers[col_idx] in {"order_id", "age", "birth", "sex", "insurance", "fua"}:
-                    item.setTextAlignment(Qt.AlignCenter)
-                self.history_table.setItem(row_idx, col_idx, item)
+        self._populate_history_table_widget(self.history_table, aggregated)
         if not aggregated:
-            QMessageBox.information(self, "Sin resultados", "No se encontró historial con resultados registrados para este DNI.")
+            QMessageBox.information(self, "Sin resultados", "No se encontró historial con resultados registrados para los filtros ingresados.")
         self._on_history_selection_changed()
+        if hasattr(self, 'history_window_btn'):
+            self.history_window_btn.setEnabled(bool(aggregated))
+
+    def open_history_window(self):
+        aggregated = getattr(self, '_history_results', [])
+        if not aggregated:
+            QMessageBox.information(self, "Sin resultados", "Primero realice una búsqueda en el historial.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Historial detallado de pacientes")
+        layout = QVBoxLayout(dialog)
+        filters = []
+        if hasattr(self, 'history_doc_input'):
+            doc_value = self.history_doc_input.text().strip()
+            if doc_value:
+                filters.append(f"DNI: {doc_value}")
+        if hasattr(self, 'history_lastname_input'):
+            last_value = self.history_lastname_input.text().strip()
+            if last_value:
+                filters.append(f"Apellidos: {last_value}")
+        filter_text = ", ".join(filters) if filters else "Sin filtros adicionales"
+        layout.addWidget(QLabel(f"Filtros aplicados: {filter_text}"))
+        table = QTableWidget(0, len(getattr(self, 'history_headers', [])))
+        table.setHorizontalHeaderLabels(getattr(self, 'history_headers', []))
+        table.setAlternatingRowColors(True)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.setWordWrap(True)
+        table.verticalHeader().setVisible(False)
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QTableWidget.SingleSelection)
+        self._populate_history_table_widget(table, aggregated)
+        layout.addWidget(table)
+        dialog.resize(1150, 650)
+        dialog.exec_()
 
     def open_history_order_from_analysis(self):
         if not hasattr(self, 'history_table'):

@@ -1,0 +1,330 @@
+diff --git a/database.py b/database.py
+index 936917545087a4afea525f5c9f923059e50db0e8..c321090ac5f6ff5b2968c72dcbf33ea57756ae33 100644
+--- a/database.py
++++ b/database.py
+@@ -1,41 +1,53 @@
+ # database.py
+ import datetime
+ import json
+ import sqlite3
+ from collections import OrderedDict
+ class LabDB:
+     def __init__(self, db_path="lab_db.sqlite"):
+         self.db_path = db_path
+         self.conn = None
+         self.cur = None
+         self.test_map = {}
++        self.referential_tests = {
++            "BK (resultado referencial)",
++            "Serología Dengue (referencial)",
++            "Serología Leptospira (referencial)",
++            "Serología Leishmaniasis (referencial)",
++        }
++        self._referential_lookup = {name.lower().strip() for name in self.referential_tests}
+     def connect(self):
+         self.conn = sqlite3.connect(self.db_path)
+         self.cur = self.conn.cursor()
+         self.cur.execute("PRAGMA foreign_keys = ON")
+         self.conn.commit()
++
++    def _is_referential_test(self, test_name):
++        if not test_name:
++            return False
++        return test_name.strip().lower() in self._referential_lookup
+     def init_db(self):
+         # Crear tablas
+         self.cur.execute("""
+             CREATE TABLE IF NOT EXISTS users (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 username TEXT UNIQUE,
+                 password TEXT,
+                 role TEXT
+             )
+         """)
+         self._ensure_column_exists("users", "full_name", "TEXT")
+         self._ensure_column_exists("users", "profession", "TEXT")
+         self._ensure_column_exists("users", "license", "TEXT")
+         self.cur.execute("""
+             CREATE TABLE IF NOT EXISTS patients (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 doc_type TEXT,
+                 doc_number TEXT,
+                 first_name TEXT,
+                 last_name TEXT,
+                 birth_date TEXT,
+                 sex TEXT,
+                 origin TEXT,
+                 hcl TEXT,
+                 height REAL,
+@@ -151,80 +163,86 @@ class LabDB:
+                 "INMUNOLOGÍA": [
+                     "Grupo sanguíneo y Factor Rh", "Factor reumatoideo", "Reacción de Widal",
+                     "Reagina plasmática rápida (RPR)", "Proteína C reactiva (PCR) - Látex",
+                     "PCR cuantitativo", "ASO", "Antígeno de superficie Hepatitis B (HBsAg)",
+                     "PSA (ELISA)"
+                 ],
+                 "PRUEBAS RÁPIDAS": [
+                     "BHCG (Prueba de embarazo en sangre)", "VIH (Prueba rápida)", "Sífilis (Prueba rápida)",
+                     "VIH/Sífilis (Prueba combinada)", "Hepatitis A (Prueba rápida)", "Hepatitis B (Prueba rápida)",
+                     "PSA (Prueba rápida)", "Sangre oculta en heces (Prueba rápida)", "Helicobacter pylori (Prueba rápida)",
+                     "Covid-19 (Prueba antigénica)", "Covid-19 (Prueba serológica)", "Dengue NS1/IgM/IgG (Prueba rápida)"
+                 ],
+                 "PARASITOLOGÍA": [
+                     "Gota gruesa", "Frotis para Leishmaniasis", "Examen coprológico (concentración)",
+                     "Examen coprológico (directo)", "Test de Graham"
+                 ],
+                 "MICROBIOLOGÍA": [
+                     "Baciloscopía", "Coloración de Gram", "Examen directo (hongos/KOH)",
+                     "Urocultivo", "Coprocultivo", "Cultivo de Neisseria gonorrhoeae",
+                     "Cultivo de Campylobacter spp.", "Secreción (otros sitios)", "Secreción vaginal",
+                     "Identificación bioquímica", "Antibiograma", "Frotis para Bartonella"
+                 ],
+                 "MICROSCOPÍA": [
+                     "Reacción inflamatoria", "Test de Helecho", "Examen completo de orina", "Sedimento urinario"
+                 ],
++                "LABORATORIO REFERENCIAL": [
++                    "BK (resultado referencial)", "Serología Dengue (referencial)", "Serología Leptospira (referencial)",
++                    "Serología Leishmaniasis (referencial)"
++                ],
+                 "OTROS": [
+                     "Ácido sulfasalicílico al 3%", "Test de aminas", "Contenido gástrico (en RN)"
+                 ],
+                 "TOMA DE MUESTRA": [
+                     "Leishmaniasis (toma de muestra)", "Dengue (toma de muestra)", "Leptospirosis (toma de muestra)",
+                     "Covid-19 (hisopado nasofaríngeo)", "Carga viral de VIH / Recuento de CD4",
+                     "CLIA (PSA, Perfil tiroideo, etc.)", "Sangre venosa/arterial (examen de proceso)"
+                 ]
+             }
+             for cat, tests in tests_by_category.items():
+                 for test in tests:
+                     self.cur.execute("INSERT INTO tests(name, category) VALUES (?,?)", (test, cat))
+             self.conn.commit()
+         # Ajustes posteriores para bases de datos existentes
+         self._ensure_test_renamed(
+             "HCG (Prueba de embarazo en orina)",
+             "BHCG (Prueba de embarazo en sangre)"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de secreción vaginal",
+             "Secreción vaginal"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de otras secreciones",
+             "Secreción (otros sitios)"
+         )
+         self._ensure_test_exists("Secreción vaginal", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Secreción (otros sitios)", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Hemoglobina - Hematocrito", "HEMATOLOGÍA")
+         self._ensure_test_exists("Parasitológico seriado", "PARASITOLOGÍA")
++        for referential_test in self.referential_tests:
++            self._ensure_test_exists(referential_test, "LABORATORIO REFERENCIAL")
+         # Cargar mapa de pruebas (nombre -> id)
+         self.cur.execute("SELECT id, name FROM tests")
+         for tid, name in self.cur.fetchall():
+             self.test_map[name] = tid
+         # Ajustar columnas agregadas posteriormente
+         self._ensure_column_exists("order_tests", "sample_status", "TEXT", default_value="recibida")
+         self._ensure_column_exists("order_tests", "sample_issue", "TEXT")
+         self._ensure_column_exists("order_tests", "observation", "TEXT")
+         self._ensure_column_exists("order_tests", "pending_since", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted", "INTEGER", default_value="0")
+         self._ensure_column_exists("order_tests", "deleted_reason", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted_by", "INTEGER")
+         self._ensure_column_exists("order_tests", "deleted_at", "TEXT")
+     def authenticate_user(self, username, password):
+         self.cur.execute(
+             "SELECT id, username, role, full_name, profession, license FROM users WHERE username=? AND password=?",
+             (username, password)
+         )
+         row = self.cur.fetchone()
+         if row:
+             uid, user, role, full_name, profession, license = row
+             return {
+                 "id": uid,
+                 "username": user,
+                 "role": role,
+@@ -368,52 +386,58 @@ class LabDB:
+         sample_date=None
+     ):
+         import datetime
+         date_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+         sample_date_str = None
+         if sample_date:
+             sample_date_str = str(sample_date)
+         age_value = None
+         if age_years is not None:
+             try:
+                 age_value = int(age_years)
+             except (TypeError, ValueError):
+                 age_value = None
+         insurance_value = (insurance_type or "SIS").strip() or "SIS"
+         fua_value = fua_number.strip() if isinstance(fua_number, str) else fua_number
+         if isinstance(fua_value, str) and fua_value == "":
+             fua_value = None
+         self.cur.execute("""
+             INSERT INTO orders(patient_id, date, sample_date, created_by, observations, requested_by, diagnosis, insurance_type, fua_number, age_years, completed)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?)
+         """, (patient_id, date_str, sample_date_str, user_id, observations, requested_by, diagnosis, insurance_value, fua_value, age_value, 0))
+         order_id = self.cur.lastrowid
+         for name in test_names:
+             if name in self.test_map:
+                 test_id = self.test_map[name]
+-                self.cur.execute("INSERT INTO order_tests(order_id, test_id, result) VALUES (?,?,?)",
+-                                 (order_id, test_id, ""))
++                status = "pendiente" if self._is_referential_test(name) else "recibida"
++                pending_since = None
++                if status == "pendiente":
++                    pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
++                self.cur.execute(
++                    "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
++                    (order_id, test_id, "", status, pending_since)
++                )
+         self.conn.commit()
+         return order_id
+     def find_recent_duplicate_order(self, patient_id, test_names, within_minutes=10):
+         if not patient_id or not test_names:
+             return None
+         normalized_target = sorted(name.strip().lower() for name in test_names if name)
+         if not normalized_target:
+             return None
+         import datetime
+         threshold = datetime.datetime.now() - datetime.timedelta(minutes=within_minutes)
+         self.cur.execute(
+             """
+             SELECT id FROM orders
+             WHERE patient_id=?
+               AND datetime(date) >= datetime(?)
+               AND (deleted IS NULL OR deleted=0)
+             ORDER BY datetime(date) DESC, id DESC
+             """,
+             (patient_id, threshold.strftime("%Y-%m-%d %H:%M:%S"))
+         )
+         candidate_ids = [row[0] for row in self.cur.fetchall()]
+         for oid in candidate_ids:
+             self.cur.execute(
+                 """
+                 SELECT t.name
+@@ -900,93 +924,110 @@ class LabDB:
+         self.cur.execute("""
+             SELECT t.name FROM order_tests ot
+             JOIN tests t ON ot.test_id = t.id
+             WHERE ot.order_id=?
+         """, (order_id,))
+         return [row[0] for row in self.cur.fetchall()]
+ 
+     def add_tests_to_order(self, order_id, test_names):
+         if not test_names:
+             return []
+         self.cur.execute("""
+             SELECT t.name FROM order_tests ot
+             JOIN tests t ON ot.test_id = t.id
+             WHERE ot.order_id=?
+         """, (order_id,))
+         existing = {row[0] for row in self.cur.fetchall()}
+         added = []
+         for name in test_names:
+             if name not in self.test_map:
+                 self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
+                 row = self.cur.fetchone()
+                 if row:
+                     self.test_map[name] = row[0]
+             if name in self.test_map and name not in existing:
+                 test_id = self.test_map[name]
++                status = "pendiente" if self._is_referential_test(name) else "recibida"
++                pending_since = None
++                if status == "pendiente":
++                    import datetime
++                    pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                 self.cur.execute(
+-                    "INSERT INTO order_tests(order_id, test_id, result) VALUES (?,?,?)",
+-                    (order_id, test_id, "")
++                    "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
++                    (order_id, test_id, "", status, pending_since)
+                 )
+                 added.append(name)
+         if added:
+             self.cur.execute("UPDATE orders SET completed=0 WHERE id=?", (order_id,))
+         self.conn.commit()
+         return added
+ 
+     def update_order_fua(self, order_id, fua_number):
+         if not order_id:
+             return False
+         value = fua_number.strip() if isinstance(fua_number, str) else fua_number
+         if isinstance(value, str) and value == "":
+             value = None
+         self.cur.execute("SELECT id FROM orders WHERE id=?", (order_id,))
+         if not self.cur.fetchone():
+             return False
+         self.cur.execute(
+             "UPDATE orders SET fua_number=? WHERE id=?",
+             (value, order_id)
+         )
+         self.conn.commit()
+         return True
+ 
+-    def get_patient_history_by_document(self, doc_number, doc_type=None):
+-        if not doc_number:
++    def get_patient_history(self, doc_number=None, doc_type=None, last_name=None):
++        if not doc_number and not last_name:
+             return []
+-        params = [doc_number]
+-        query = """
++        params = []
++        conditions = ["(o.deleted IS NULL OR o.deleted=0)", "(ot.deleted IS NULL OR ot.deleted=0)"]
++        if doc_number:
++            conditions.append("p.doc_number = ?")
++            params.append(doc_number)
++        if doc_type:
++            conditions.append("p.doc_type = ?")
++            params.append(doc_type)
++        if last_name:
++            conditions.append("UPPER(p.last_name) LIKE UPPER(?)")
++            params.append(f"%{last_name}%")
++        where_clause = " AND ".join(conditions)
++        query = f"""
+             SELECT o.id, o.date, o.sample_date, t.name, ot.result, t.category,
+                    p.first_name, p.last_name, p.doc_type, p.doc_number,
+-                   p.sex, p.birth_date, p.hcl, p.origin, o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
+-                   ot.sample_status, ot.sample_issue, ot.observation, ot.id
++                   p.sex, p.birth_date, p.hcl, p.origin, p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
++                   o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
++                   ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id
+             FROM orders o
+             JOIN patients p ON o.patient_id = p.id
+             JOIN order_tests ot ON ot.order_id = o.id
+             JOIN tests t ON ot.test_id = t.id
+-            WHERE p.doc_number = ? AND (o.deleted IS NULL OR o.deleted=0) AND (ot.deleted IS NULL OR ot.deleted=0)
++            WHERE {where_clause}
++            ORDER BY datetime(o.date) DESC, o.id DESC, t.name ASC
+         """
+-        if doc_type:
+-            query += " AND p.doc_type = ?"
+-            params.append(doc_type)
+-        query += " ORDER BY datetime(o.date) DESC, o.id DESC, t.name ASC"
+         self.cur.execute(query, params)
+         return self.cur.fetchall()
+ 
++    def get_patient_history_by_document(self, doc_number, doc_type=None):
++        return self.get_patient_history(doc_number=doc_number, doc_type=doc_type)
++
+     def _ensure_test_renamed(self, old_name, new_name):
+         if old_name == new_name:
+             return
+         self.cur.execute("UPDATE tests SET name=? WHERE name=?", (new_name, old_name))
+         self.conn.commit()
+ 
+     def _ensure_test_exists(self, name, category):
+         self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
+         row = self.cur.fetchone()
+         if row:
+             if name not in self.test_map:
+                 self.test_map[name] = row[0]
+             return
+         self.cur.execute("INSERT INTO tests(name, category) VALUES (?,?)", (name, category))
+         self.conn.commit()
+         if name not in self.test_map:
+             self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
+             new_row = self.cur.fetchone()
+             if new_row:
+                 self.test_map[name] = new_row[0]

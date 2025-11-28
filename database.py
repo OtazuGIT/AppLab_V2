@@ -9,11 +9,23 @@ class LabDB:
         self.conn = None
         self.cur = None
         self.test_map = {}
+        self.referential_tests = {
+            "BK (resultado referencial)",
+            "Serología Dengue (referencial)",
+            "Serología Leptospira (referencial)",
+            "Serología Leishmaniasis (referencial)",
+        }
+        self._referential_lookup = {name.lower().strip() for name in self.referential_tests}
     def connect(self):
         self.conn = sqlite3.connect(self.db_path)
         self.cur = self.conn.cursor()
         self.cur.execute("PRAGMA foreign_keys = ON")
         self.conn.commit()
+
+    def _is_referential_test(self, test_name):
+        if not test_name:
+            return False
+        return test_name.strip().lower() in self._referential_lookup
     def init_db(self):
         # Crear tablas
         self.cur.execute("""
@@ -173,6 +185,10 @@ class LabDB:
                 "MICROSCOPÍA": [
                     "Reacción inflamatoria", "Test de Helecho", "Examen completo de orina", "Sedimento urinario"
                 ],
+                "LABORATORIO REFERENCIAL": [
+                    "BK (resultado referencial)", "Serología Dengue (referencial)", "Serología Leptospira (referencial)",
+                    "Serología Leishmaniasis (referencial)"
+                ],
                 "OTROS": [
                     "Ácido sulfasalicílico al 3%", "Test de aminas", "Contenido gástrico (en RN)"
                 ],
@@ -203,6 +219,8 @@ class LabDB:
         self._ensure_test_exists("Secreción (otros sitios)", "MICROBIOLOGÍA")
         self._ensure_test_exists("Hemoglobina - Hematocrito", "HEMATOLOGÍA")
         self._ensure_test_exists("Parasitológico seriado", "PARASITOLOGÍA")
+        for referential_test in self.referential_tests:
+            self._ensure_test_exists(referential_test, "LABORATORIO REFERENCIAL")
         # Cargar mapa de pruebas (nombre -> id)
         self.cur.execute("SELECT id, name FROM tests")
         for tid, name in self.cur.fetchall():
@@ -390,8 +408,14 @@ class LabDB:
         for name in test_names:
             if name in self.test_map:
                 test_id = self.test_map[name]
-                self.cur.execute("INSERT INTO order_tests(order_id, test_id, result) VALUES (?,?,?)",
-                                 (order_id, test_id, ""))
+                status = "pendiente" if self._is_referential_test(name) else "recibida"
+                pending_since = None
+                if status == "pendiente":
+                    pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                self.cur.execute(
+                    "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
+                    (order_id, test_id, "", status, pending_since)
+                )
         self.conn.commit()
         return order_id
     def find_recent_duplicate_order(self, patient_id, test_names, within_minutes=10):
@@ -922,9 +946,14 @@ class LabDB:
                     self.test_map[name] = row[0]
             if name in self.test_map and name not in existing:
                 test_id = self.test_map[name]
+                status = "pendiente" if self._is_referential_test(name) else "recibida"
+                pending_since = None
+                if status == "pendiente":
+                    import datetime
+                    pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 self.cur.execute(
-                    "INSERT INTO order_tests(order_id, test_id, result) VALUES (?,?,?)",
-                    (order_id, test_id, "")
+                    "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
+                    (order_id, test_id, "", status, pending_since)
                 )
                 added.append(name)
         if added:
@@ -948,27 +977,39 @@ class LabDB:
         self.conn.commit()
         return True
 
-    def get_patient_history_by_document(self, doc_number, doc_type=None):
-        if not doc_number:
+    def get_patient_history(self, doc_number=None, doc_type=None, last_name=None):
+        if not doc_number and not last_name:
             return []
-        params = [doc_number]
-        query = """
+        params = []
+        conditions = ["(o.deleted IS NULL OR o.deleted=0)", "(ot.deleted IS NULL OR ot.deleted=0)"]
+        if doc_number:
+            conditions.append("p.doc_number = ?")
+            params.append(doc_number)
+        if doc_type:
+            conditions.append("p.doc_type = ?")
+            params.append(doc_type)
+        if last_name:
+            conditions.append("UPPER(p.last_name) LIKE UPPER(?)")
+            params.append(f"%{last_name}%")
+        where_clause = " AND ".join(conditions)
+        query = f"""
             SELECT o.id, o.date, o.sample_date, t.name, ot.result, t.category,
                    p.first_name, p.last_name, p.doc_type, p.doc_number,
-                   p.sex, p.birth_date, p.hcl, p.origin, o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
-                   ot.sample_status, ot.sample_issue, ot.observation, ot.id
+                   p.sex, p.birth_date, p.hcl, p.origin, p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
+                   o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
+                   ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id
             FROM orders o
             JOIN patients p ON o.patient_id = p.id
             JOIN order_tests ot ON ot.order_id = o.id
             JOIN tests t ON ot.test_id = t.id
-            WHERE p.doc_number = ? AND (o.deleted IS NULL OR o.deleted=0) AND (ot.deleted IS NULL OR ot.deleted=0)
+            WHERE {where_clause}
+            ORDER BY datetime(o.date) DESC, o.id DESC, t.name ASC
         """
-        if doc_type:
-            query += " AND p.doc_type = ?"
-            params.append(doc_type)
-        query += " ORDER BY datetime(o.date) DESC, o.id DESC, t.name ASC"
         self.cur.execute(query, params)
         return self.cur.fetchall()
+
+    def get_patient_history_by_document(self, doc_number, doc_type=None):
+        return self.get_patient_history(doc_number=doc_number, doc_type=doc_type)
 
     def _ensure_test_renamed(self, old_name, new_name):
         if old_name == new_name:
