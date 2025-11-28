@@ -8,7 +8,7 @@ import re
 import unicodedata
 from collections import OrderedDict
 from PyQt5.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
-                             QStackedWidget, QFormLayout, QScrollArea, QGroupBox, QComboBox,
+                             QStackedWidget, QTabWidget, QFormLayout, QScrollArea, QGroupBox, QComboBox,
                              QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox, QCheckBox,
                              QDateEdit, QRadioButton, QButtonGroup, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
                              QSpinBox, QInputDialog, QAbstractItemView, QGridLayout)
@@ -3675,6 +3675,7 @@ class MainWindow(QMainWindow):
             self._format_insurance_display(entry.get("insurance_type")),
             self._format_fua_display(entry),
             self._format_history_sample_status(entry),
+            "\n".join(sorted(entry.get("tests", []))) or "-",
             "\n  ".join(entry.get("groups", {}).get("hematology", [])) or "-",
             "\n  ".join(entry.get("groups", {}).get("biochemistry", [])) or "-",
             "\n  ".join(entry.get("groups", {}).get("micro_parasito", [])) or "-",
@@ -4701,7 +4702,12 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.warning(self, "Error", f"No se pudo exportar:\n{e}")
     def init_analisis_page(self):
-        layout = QVBoxLayout(self.page_analisis)
+        main_layout = QVBoxLayout(self.page_analisis)
+        self.analysis_tabs = QTabWidget()
+        main_layout.addWidget(self.analysis_tabs)
+
+        stats_tab = QWidget()
+        stats_layout = QVBoxLayout(stats_tab)
         stats_controls_layout = QHBoxLayout()
         stats_controls_layout.addWidget(QLabel("Visualizar por:"))
         self.stats_mode_combo = QComboBox()
@@ -4726,10 +4732,10 @@ class MainWindow(QMainWindow):
         self.stats_year_spin.setValue(today.year)
         stats_controls_layout.addWidget(self.stats_year_spin)
         stats_controls_layout.addStretch()
-        layout.addLayout(stats_controls_layout)
+        stats_layout.addLayout(stats_controls_layout)
         self.stats_label = QLabel()
         self.stats_label.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self.stats_label)
+        stats_layout.addWidget(self.stats_label)
         self.stats_table = QTableWidget(0, 3)
         self.stats_table.setHorizontalHeaderLabels(["Área", "Examen", "Cantidad"])
         self.stats_table.setAlternatingRowColors(True)
@@ -4737,7 +4743,11 @@ class MainWindow(QMainWindow):
         self.stats_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.stats_table.verticalHeader().setVisible(False)
         self.stats_table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.stats_table)
+        stats_layout.addWidget(self.stats_table)
+        self.analysis_tabs.addTab(stats_tab, "Estadísticas")
+
+        activity_tab = QWidget()
+        activity_layout = QVBoxLayout(activity_tab)
         controls_layout = QHBoxLayout()
         controls_layout.addWidget(QLabel("Período:"))
         self.range_combo = QComboBox()
@@ -4776,10 +4786,20 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.export_activity_delivery_btn)
         controls_layout.addWidget(self.delete_activity_btn)
         controls_layout.addStretch()
-        layout.addLayout(controls_layout)
+        activity_layout.addLayout(controls_layout)
+
+        activity_filter_layout = QHBoxLayout()
+        activity_filter_layout.addWidget(QLabel("Búsqueda por muestras:"))
+        self.activity_search_input = QLineEdit()
+        self.activity_search_input.setPlaceholderText("Filtrar por prueba, paciente o estado de muestra")
+        self.activity_search_input.setClearButtonEnabled(True)
+        activity_filter_layout.addWidget(self.activity_search_input)
+        activity_filter_layout.addStretch()
+        activity_layout.addLayout(activity_filter_layout)
+
         self.activity_caption = QLabel()
         self.activity_caption.setStyleSheet("font-weight: bold;")
-        layout.addWidget(self.activity_caption)
+        activity_layout.addWidget(self.activity_caption)
         self.activity_table = QTableWidget(0, 8)
         self.activity_table.setHorizontalHeaderLabels([
             "F. muestra / Registro",
@@ -4794,7 +4814,11 @@ class MainWindow(QMainWindow):
         self.activity_table.setAlternatingRowColors(True)
         self.activity_table.horizontalHeader().setStretchLastSection(True)
         self.activity_table.setSelectionMode(QTableWidget.MultiSelection)
-        layout.addWidget(self.activity_table)
+        activity_layout.addWidget(self.activity_table)
+        self.analysis_tabs.addTab(activity_tab, "Registro de pruebas")
+
+        history_tab = QWidget()
+        history_tab_layout = QVBoxLayout(history_tab)
         history_group = QGroupBox("Historial de pacientes")
         history_layout = QVBoxLayout(history_group)
         history_search_layout = QHBoxLayout()
@@ -4833,6 +4857,7 @@ class MainWindow(QMainWindow):
             "Tipo de seguro",
             "FUA",
             "Seguimiento",
+            "Exámenes de la orden",
             "Hematología",
             "Bioquímica",
             "Micro/Parasitología",
@@ -4850,7 +4875,8 @@ class MainWindow(QMainWindow):
         self.history_headers = history_headers
         self.history_column_map = {header: idx for idx, header in enumerate(history_headers)}
         history_layout.addWidget(self.history_table)
-        layout.addWidget(history_group)
+        history_tab_layout.addWidget(history_group)
+        self.analysis_tabs.addTab(history_tab, "Historial de pacientes")
         self._stats_controls_ready = False
         self.stats_mode_combo.currentIndexChanged.connect(self._update_stats_period_controls)
         self.stats_month_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
@@ -4858,6 +4884,7 @@ class MainWindow(QMainWindow):
         self.stats_year_spin.valueChanged.connect(lambda _: self.refresh_statistics())
         self._history_results = []
         self.range_combo.currentIndexChanged.connect(self._update_range_controls)
+        self.activity_search_input.textChanged.connect(self.apply_activity_filter)
         self.view_activity_btn.clicked.connect(self.load_activity_summary)
         self.export_activity_pdf_btn.clicked.connect(lambda: self.export_activity_record("pdf"))
         self.export_activity_csv_btn.clicked.connect(lambda: self.export_activity_record("csv"))
@@ -5018,6 +5045,59 @@ class MainWindow(QMainWindow):
         return start_dt, end_dt, description
 
 
+    def _render_activity_rows(self, activity_data, description, total_count=None):
+        if not hasattr(self, 'activity_table'):
+            return
+        self.activity_table.setRowCount(len(activity_data))
+        for row_idx, item in enumerate(activity_data):
+            self.activity_table.setItem(row_idx, 0, QTableWidgetItem(item.get("date", "")))
+            order_item = QTableWidgetItem(str(item.get("order_id", "")))
+            order_item.setTextAlignment(Qt.AlignCenter)
+            self.activity_table.setItem(row_idx, 1, order_item)
+            self.activity_table.setItem(row_idx, 2, QTableWidgetItem(item.get("patient", "")))
+            self.activity_table.setItem(row_idx, 3, QTableWidgetItem(item.get("document", "")))
+            age_item = QTableWidgetItem(item.get("age", ""))
+            age_item.setTextAlignment(Qt.AlignCenter)
+            self.activity_table.setItem(row_idx, 4, age_item)
+            self.activity_table.setItem(row_idx, 5, QTableWidgetItem(item.get("test", "")))
+            status_text = self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue"))
+            self.activity_table.setItem(row_idx, 6, QTableWidgetItem(status_text or "-"))
+            self.activity_table.setItem(row_idx, 7, QTableWidgetItem(item.get("result", "")))
+        if hasattr(self, 'activity_caption'):
+            query = self.activity_search_input.text().strip() if hasattr(self, 'activity_search_input') else ""
+            filtered_count = len(activity_data)
+            base_total = total_count if total_count is not None else filtered_count
+            if query and base_total != filtered_count:
+                count_text = f"{filtered_count} coincidencia(s) de {base_total}" + (f" (filtro: \"{query}\")" if query else "")
+            else:
+                count_text = f"{filtered_count} resultado(s)"
+            self.activity_caption.setText(
+                f"Registro de pruebas: {description} - {count_text}"
+            )
+
+
+    def apply_activity_filter(self):
+        cache = getattr(self, '_activity_cache', {}) if hasattr(self, '_activity_cache') else {}
+        data = cache.get("data", [])
+        description = cache.get("description", "")
+        query = self.activity_search_input.text().strip().lower() if hasattr(self, 'activity_search_input') else ""
+        if not query:
+            filtered = data
+        else:
+            def matches(item):
+                haystacks = [
+                    item.get("patient", ""),
+                    item.get("document", ""),
+                    item.get("test", ""),
+                    self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue")) or "",
+                    item.get("result", ""),
+                ]
+                haystacks = [h for h in haystacks if h not in (None, "")]
+                return any(query in str(value).lower() for value in haystacks)
+            filtered = [item for item in data if matches(item)]
+        self._render_activity_rows(filtered, description, total_count=len(data))
+
+
     def load_activity_summary(self):
         if not hasattr(self, 'activity_table'):
             return
@@ -5107,25 +5187,10 @@ class MainWindow(QMainWindow):
             "start": start_dt,
             "end": end_dt
         }
-        self.activity_table.setRowCount(len(activity_data))
-        for row_idx, item in enumerate(activity_data):
-            self.activity_table.setItem(row_idx, 0, QTableWidgetItem(item["date"]))
-            order_item = QTableWidgetItem(str(item["order_id"]))
-            order_item.setTextAlignment(Qt.AlignCenter)
-            self.activity_table.setItem(row_idx, 1, order_item)
-            self.activity_table.setItem(row_idx, 2, QTableWidgetItem(item["patient"]))
-            self.activity_table.setItem(row_idx, 3, QTableWidgetItem(item["document"]))
-            age_item = QTableWidgetItem(item["age"])
-            age_item.setTextAlignment(Qt.AlignCenter)
-            self.activity_table.setItem(row_idx, 4, age_item)
-            self.activity_table.setItem(row_idx, 5, QTableWidgetItem(item["test"]))
-            status_text = self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue"))
-            self.activity_table.setItem(row_idx, 6, QTableWidgetItem(status_text or "-"))
-            self.activity_table.setItem(row_idx, 7, QTableWidgetItem(item["result"]))
-        if hasattr(self, 'activity_caption'):
-            self.activity_caption.setText(
-                f"Registro de pruebas: {description} - {len(activity_data)} resultado(s)"
-            )
+        if hasattr(self, 'activity_search_input'):
+            self.apply_activity_filter()
+        else:
+            self._render_activity_rows(activity_data, description)
 
 
     def delete_selected_activity_entries(self):
