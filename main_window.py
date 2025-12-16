@@ -2691,7 +2691,6 @@ class MainWindow(QMainWindow):
         has_empty = False
         pending_samples = 0
         pending_tests = []
-        missing_notes = []
         for test_name, info in self.order_fields.items():
             template = info.get("template")
             meta = info.get("meta", {})
@@ -2718,8 +2717,6 @@ class MainWindow(QMainWindow):
                 pending_since_value = None
             if status_value == "recibida":
                 issue_value = ""
-            if status_value in {"pendiente", "rechazada"} and not issue_value:
-                missing_notes.append(test_name)
             if template:
                 values = {}
                 for key, field_info in info["fields"].items():
@@ -2745,14 +2742,6 @@ class MainWindow(QMainWindow):
                 "observation": observation_value,
                 "pending_since": pending_since_value
             }
-        if missing_notes:
-            detalle = ", ".join(missing_notes)
-            QMessageBox.warning(
-                self,
-                "Motivo requerido",
-                f"Indique el motivo o detalle para las muestras marcadas como pendientes/rechazadas: {detalle}"
-            )
-            return
         if has_empty:
             reply = QMessageBox.question(
                 self,
@@ -3765,6 +3754,7 @@ class MainWindow(QMainWindow):
         normalized = self._normalize_text(segment)
         groups = set()
         sexes = set()
+        ranges = []
         if any(keyword in normalized for keyword in ["rn", "recien nacido", "neon", "lactant"]):
             groups.add('newborn')
         if any(keyword in normalized for keyword in ["nino", "ninos", "infantil", "pediatr", "menor", "adolesc"]):
@@ -3786,15 +3776,28 @@ class MainWindow(QMainWindow):
             start = int(match.group(1))
             end = int(match.group(2))
             self._assign_age_range_groups(groups, start, end)
-        for match in re.finditer(r'(?:>=|<=|>|<)?\s*(\d+)\s*(?:anos|ano|a)', normalized):
-            age = int(match.group(1))
+            ranges.append((start, end))
+        for match in re.finditer(r'(>=|<=|>|<)?\s*(\d+)\s*(?:anos|ano|a)', normalized):
+            operator = match.group(1) or ""
+            age = int(match.group(2))
             self._assign_age_range_groups(groups, age, age)
+            if operator == '>':
+                ranges.append((age + 0.001, float('inf')))
+            elif operator == '>=':
+                ranges.append((age, float('inf')))
+            elif operator == '<':
+                ranges.append((float('-inf'), age - 0.001))
+            elif operator == '<=':
+                ranges.append((float('-inf'), age))
+            else:
+                ranges.append((age, age))
         for match in re.finditer(r'(\d+)\s*(?:mes|meses)', normalized):
             months = int(match.group(1))
             groups.add('child')
             if months <= 1:
                 groups.add('newborn')
-        return {"groups": groups, "sexes": sexes}
+            ranges.append((0, max(months / 12, 0)))
+        return {"groups": groups, "sexes": sexes, "ranges": ranges}
 
     def _assign_age_range_groups(self, groups, start_age, end_age):
         if end_age < 0 or start_age < 0:
@@ -3811,6 +3814,10 @@ class MainWindow(QMainWindow):
     def _segment_matches_context(self, classification, age_value, normalized_sex):
         groups = classification.get('groups', set())
         sexes = classification.get('sexes', set())
+        ranges = classification.get('ranges', [])
+        if age_value is not None and ranges:
+            if not any(self._age_in_range(age_value, start, end) for start, end in ranges):
+                return False
         if age_value is None:
             return self._segment_matches_sex(sexes, normalized_sex)
         target_groups = set()
@@ -3823,6 +3830,15 @@ class MainWindow(QMainWindow):
         if groups and not groups.intersection(target_groups):
             return False
         return self._segment_matches_sex(sexes, normalized_sex)
+
+    def _age_in_range(self, age_value, start, end):
+        if start is None and end is None:
+            return True
+        if start is None:
+            return age_value <= end
+        if end is None:
+            return age_value >= start
+        return start <= age_value <= end
 
     def _segment_matches_sex(self, sexes, normalized_sex):
         if not sexes:
@@ -4491,6 +4507,57 @@ class MainWindow(QMainWindow):
 
         table_total_width = pdf.w - pdf.l_margin - pdf.r_margin
         column_widths = [table_total_width * 0.38, table_total_width * 0.27, table_total_width * 0.35]
+        content_width = table_total_width
+
+        def estimate_table_row_height(texts, widths):
+            line_height = 3.4
+            padding_x = 1.4
+            padding_y = 0.9
+            max_lines = 1
+            for idx, text in enumerate(texts):
+                available = max(widths[idx] - 2 * padding_x, 1)
+                lines = wrap_text(text, available)
+                if len(lines) > max_lines:
+                    max_lines = len(lines)
+            return max_lines * line_height + 2 * padding_y
+
+        def estimate_status_block(status_text, observation_text):
+            height = 2
+            if status_text:
+                status_lines = wrap_text(status_text, content_width)
+                height += max(5, len(status_lines) * 3.8)
+            if observation_text:
+                obs_lines = wrap_text(observation_text, content_width)
+                height += max(5, len(obs_lines) * 3.8)
+            return height
+
+        def estimate_structured_height(items, status_text, observation_text):
+            height = 9  # cabecera de prueba
+            height += 6  # cabecera de tabla
+            for item in items:
+                if item.get("type") == "section":
+                    height += 5.2
+                    continue
+                row_texts = [
+                    item.get('label', ''),
+                    item.get('value', '-'),
+                    item.get('reference') or '-'
+                ]
+                height += estimate_table_row_height(row_texts, column_widths)
+            height += estimate_status_block(status_text, observation_text)
+            return height
+
+        def estimate_text_height(text_value, status_text, observation_text):
+            lines = wrap_text(text_value, content_width)
+            height = 9
+            height += max(6, len(lines) * 4)
+            height += estimate_status_block(status_text, observation_text)
+            return height
+
+        def ensure_test_block_space(required_height):
+            if pdf.get_y() + required_height > pdf.h - pdf.b_margin:
+                pdf.add_page()
+                draw_page_header()
 
         def draw_test_header(title):
             ensure_space(9)
@@ -4514,6 +4581,16 @@ class MainWindow(QMainWindow):
                         continue
                 elif self._is_blank_result(value_text):
                     continue
+
+            status_text = self._format_sample_status_text(sample_status, sample_issue, pending_since)
+            observation_text = observation or ""
+
+            if structure.get("type") == "structured":
+                required_height = estimate_structured_height(structure.get("items", []), status_text, observation_text)
+            else:
+                required_height = estimate_text_height(structure.get("value", ""), status_text, observation_text)
+
+            ensure_test_block_space(required_height)
             draw_test_header(test_name)
 
             def on_new_page():
@@ -4536,17 +4613,16 @@ class MainWindow(QMainWindow):
                 ensure_space(6)
                 pdf.set_font("Arial", '', 7)
                 pdf.multi_cell(0, 4, self._ensure_latin1(text_value))
-            status_text = self._format_sample_status_text(sample_status, sample_issue, pending_since)
             if status_text:
                 ensure_space(5)
                 pdf.set_font("Arial", 'I', 6.6)
                 pdf.set_text_color(166, 38, 38)
                 pdf.multi_cell(0, 3.8, self._ensure_latin1(f"Estado de muestra: {status_text}"))
                 pdf.set_text_color(0, 0, 0)
-            if observation:
+            if observation_text:
                 ensure_space(5)
                 pdf.set_font("Arial", 'I', 6.6)
-                pdf.multi_cell(0, 3.8, self._ensure_latin1(f"Observación: {observation}"))
+                pdf.multi_cell(0, 3.8, self._ensure_latin1(f"Observación: {observation_text}"))
             pdf.ln(2)
 
         if ord_inf.get('observations') and str(ord_inf['observations']).strip().upper() not in {"", "N/A"}:
