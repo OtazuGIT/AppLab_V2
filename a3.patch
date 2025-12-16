@@ -1,0 +1,265 @@
+diff --git a/main_window.py b/main_window.py
+index 125b4fe8a83c87f51c185ad29977057256fc38d7..f0a9631555b99437bbdd5804eb578eef4dbb74b1 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -4853,50 +4853,62 @@ class MainWindow(QMainWindow):
+             "Gestación",
+             "Sexo",
+             "Procedencia",
+             "HCL",
+             "Tipo de seguro",
+             "FUA",
+             "Seguimiento",
+             "Exámenes de la orden",
+             "Hematología",
+             "Bioquímica",
+             "Micro/Parasitología",
+             "Otros exámenes",
+             "Emitido"
+         ]
+         self.history_table = QTableWidget(0, len(history_headers))
+         self.history_table.setHorizontalHeaderLabels(history_headers)
+         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
+         self.history_table.setSelectionMode(QTableWidget.SingleSelection)
+         self.history_table.setAlternatingRowColors(True)
+         self.history_table.setWordWrap(True)
+         self.history_table.verticalHeader().setVisible(False)
+         self.history_table.horizontalHeader().setStretchLastSection(True)
+         self.history_headers = history_headers
+         self.history_column_map = {header: idx for idx, header in enumerate(history_headers)}
+         history_layout.addWidget(self.history_table)
++
++        self.history_preview_group = QGroupBox("Vista previa detallada de la orden")
++        preview_layout = QVBoxLayout(self.history_preview_group)
++        self.history_preview_hint = QLabel("Seleccione una fila para ver los exámenes y datos completos de la orden.")
++        self.history_preview_hint.setStyleSheet("color: #555;")
++        preview_layout.addWidget(self.history_preview_hint)
++        self.history_preview_text = QTextEdit()
++        self.history_preview_text.setReadOnly(True)
++        self.history_preview_text.setMinimumHeight(200)
++        self.history_preview_text.setPlaceholderText("Sin selección. Busque y seleccione una orden para ver el detalle aquí.")
++        preview_layout.addWidget(self.history_preview_text)
++        history_layout.addWidget(self.history_preview_group)
+         history_tab_layout.addWidget(history_group)
+         self.analysis_tabs.addTab(history_tab, "Historial de pacientes")
+         self._stats_controls_ready = False
+         self.stats_mode_combo.currentIndexChanged.connect(self._update_stats_period_controls)
+         self.stats_month_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_quarter_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_year_spin.valueChanged.connect(lambda _: self.refresh_statistics())
+         self._history_results = []
+         self.range_combo.currentIndexChanged.connect(self._update_range_controls)
+         self.activity_search_input.textChanged.connect(self.apply_activity_filter)
+         self.view_activity_btn.clicked.connect(self.load_activity_summary)
+         self.export_activity_pdf_btn.clicked.connect(lambda: self.export_activity_record("pdf"))
+         self.export_activity_csv_btn.clicked.connect(lambda: self.export_activity_record("csv"))
+         self.export_activity_delivery_btn.clicked.connect(self.export_activity_delivery_sheet)
+         self.delete_activity_btn.clicked.connect(self.delete_selected_activity_entries)
+         self._update_range_controls()
+         self._stats_controls_ready = True
+         self._update_stats_period_controls()
+         self.history_doc_input.returnPressed.connect(self.search_patient_history)
+         self.history_lastname_input.returnPressed.connect(self.search_patient_history)
+         self.history_search_btn.clicked.connect(self.search_patient_history)
+         self.history_open_btn.clicked.connect(self.open_history_order_from_analysis)
+         self.history_table.itemSelectionChanged.connect(self._on_history_selection_changed)
+         self.history_fua_btn.clicked.connect(self.edit_history_fua)
+         self.history_window_btn.clicked.connect(self.open_history_window)
+@@ -5613,75 +5625,143 @@ class MainWindow(QMainWindow):
+                 pdf.set_xy(pdf.l_margin, start_y + header_height)
+                 pdf.set_font("Arial", '', 7.2)
+             row_start_x = pdf.l_margin
+             row_start_y = pdf.get_y()
+             for idx, column in enumerate(columns):
+                 width = column_widths[idx]
+                 pdf.rect(row_start_x, row_start_y, width, row_height)
+                 text_y = row_start_y + padding_y
+                 for line in wrapped[idx]:
+                     pdf.set_xy(row_start_x + padding_x, text_y)
+                     pdf.cell(width - 2 * padding_x, line_height, line, border=0)
+                     text_y += line_height
+                 row_start_x += width
+             pdf.set_xy(pdf.l_margin, row_start_y + row_height)
+         pdf.set_margins(prev_left, prev_top, prev_right)
+         pdf.set_auto_page_break(prev_auto, margin=prev_bottom)
+ 
+     def _clear_history_table(self):
+         if hasattr(self, 'history_table'):
+             self.history_table.setRowCount(0)
+         self._history_results = []
+         if hasattr(self, 'history_open_btn'):
+             self.history_open_btn.setEnabled(False)
+         if hasattr(self, 'history_window_btn'):
+             self.history_window_btn.setEnabled(False)
++        self._render_history_preview(None)
++
++    def _render_history_preview(self, entry):
++        if not hasattr(self, 'history_preview_text'):
++            return
++        if not entry:
++            self.history_preview_text.setPlainText(
++                "Seleccione una orden para ver aquí un resumen completo de exámenes y datos del paciente."
++            )
++            return
++
++        def add_section(title, content_lines):
++            clean_lines = [line for line in content_lines if str(line).strip()]
++            if not clean_lines:
++                return
++            lines.append(title)
++            for line in clean_lines:
++                lines.append(f"  {line}")
++            lines.append("")
++
++        lines = []
++        header_date = self._format_date_for_registry(entry)
++        emitted_text = self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
++        insurance_text = self._format_insurance_display(entry.get("insurance_type"))
++        fua_text = self._format_fua_display(entry)
++        lines.append(f"Orden #{entry.get('order_id', '-')}: {header_date or '-'}")
++        lines.append(f"Seguro: {insurance_text} | FUA: {fua_text} | Emitido: {emitted_text}")
++        lines.append("")
++
++        patient_block = self._format_patient_block_for_registry(entry)
++        add_section("Datos del paciente", patient_block.splitlines())
++
++        sample_status_text = self._format_history_sample_status(entry)
++        add_section("Estado de muestras", sample_status_text.split("\n"))
++
++        observations = entry.get("observations")
++        if observations:
++            obs_clean = " ".join(str(observations).split())
++            add_section("Observaciones de la orden", [obs_clean])
++
++        groups = entry.get("groups", {})
++        category_labels = [
++            ("Hematología", "hematology"),
++            ("Bioquímica", "biochemistry"),
++            ("Micro/Parasitología", "micro_parasito"),
++            ("Otros exámenes", "others")
++        ]
++        for label, key in category_labels:
++            items = groups.get(key, []) if isinstance(groups, dict) else []
++            add_section(label, [f"• {item}" for item in items])
++
++        tests = entry.get("tests", [])
++        add_section("Exámenes en la orden", [f"• {test}" for test in sorted(set(tests))])
++
++        self.history_preview_text.setPlainText("\n".join(lines).rstrip())
+ 
+     def _on_history_selection_changed(self):
+         if not hasattr(self, 'history_table'):
+             return
+         selection = self.history_table.selectionModel()
+         has_selection = bool(selection.selectedRows()) if selection else False
+         if hasattr(self, 'history_open_btn'):
+             self.history_open_btn.setEnabled(has_selection)
+         if hasattr(self, 'history_fua_btn'):
+             enable_fua = False
+             tooltip = ""
+             if has_selection and selection:
+                 indexes = selection.selectedRows()
+                 if indexes:
+                     row = indexes[0].row()
+                     history_items = getattr(self, '_history_results', [])
+                     if 0 <= row < len(history_items):
+                         entry = history_items[row]
+                         insurance = (entry.get("insurance_type") or "").strip().lower()
+                         if insurance == "particular":
+                             tooltip = "Las atenciones particulares no requieren FUA."
+                         else:
+                             enable_fua = True
+             self.history_fua_btn.setEnabled(enable_fua)
+             self.history_fua_btn.setToolTip(tooltip)
++        self._update_history_preview_from_selection()
++
++    def _update_history_preview_from_selection(self):
++        if not hasattr(self, 'history_table'):
++            return
++        selection = self.history_table.selectionModel()
++        if not selection or not selection.selectedRows():
++            self._render_history_preview(None)
++            return
++        row = selection.selectedRows()[0].row()
++        history_items = getattr(self, '_history_results', [])
++        entry = history_items[row] if 0 <= row < len(history_items) else None
++        self._render_history_preview(entry)
+ 
+ 
+     def search_patient_history(self):
+         if not hasattr(self, 'history_table'):
+             return
+         doc_number = self.history_doc_input.text().strip() if hasattr(self, 'history_doc_input') else ""
+         last_name = self.history_lastname_input.text().strip() if hasattr(self, 'history_lastname_input') else ""
+         if doc_number == "" and last_name == "":
+             QMessageBox.warning(self, "Filtro requerido", "Ingrese un DNI o apellidos para realizar la búsqueda.")
+             return
+         if doc_number and not doc_number.isdigit():
+             QMessageBox.warning(self, "Formato inválido", "El DNI debe contener solo números.")
+             return
+         self._clear_history_table()
+         rows = self.labdb.get_patient_history(doc_number=doc_number or None, doc_type="DNI" if doc_number else None, last_name=last_name or None)
+         records = []
+         for row in rows:
+             (
+                 order_id,
+                 date_str,
+                 sample_date_str,
+                 test_name,
+                 raw_result,
+                 category,
+                 first_name,
+@@ -5738,50 +5818,53 @@ class MainWindow(QMainWindow):
+                 "is_pregnant": is_pregnant,
+                 "gestational_age_weeks": gest_age_weeks,
+                 "expected_delivery_date": expected_delivery,
+                 "age": age_display,
+                 "test": test_name,
+                 "result": result_text,
+                 "summary_items": summary_items,
+                 "category": category,
+                 "order_observations": order_obs,
+                 "insurance_type": insurance_type,
+                 "fua_number": fua_number,
+                 "emitted": emitted,
+                 "emitted_at": emitted_at,
+                 "first_name": first_name,
+                 "last_name": patient_last_name,
+                 "sample_status": sample_status,
+                 "sample_issue": sample_issue,
+                 "observation": observation,
+                 "pending_since": pending_since
+             })
+         aggregated = self._aggregate_results_by_order(records)
+         self._history_results = aggregated
+         self._populate_history_table_widget(self.history_table, aggregated)
+         if not aggregated:
+             QMessageBox.information(self, "Sin resultados", "No se encontró historial con resultados registrados para los filtros ingresados.")
++            self._render_history_preview(None)
++        else:
++            self.history_table.selectRow(0)
+         self._on_history_selection_changed()
+         if hasattr(self, 'history_window_btn'):
+             self.history_window_btn.setEnabled(bool(aggregated))
+ 
+     def open_history_window(self):
+         aggregated = getattr(self, '_history_results', [])
+         if not aggregated:
+             QMessageBox.information(self, "Sin resultados", "Primero realice una búsqueda en el historial.")
+             return
+         dialog = QDialog(self)
+         dialog.setWindowTitle("Historial detallado de pacientes")
+         layout = QVBoxLayout(dialog)
+         filters = []
+         if hasattr(self, 'history_doc_input'):
+             doc_value = self.history_doc_input.text().strip()
+             if doc_value:
+                 filters.append(f"DNI: {doc_value}")
+         if hasattr(self, 'history_lastname_input'):
+             last_value = self.history_lastname_input.text().strip()
+             if last_value:
+                 filters.append(f"Apellidos: {last_value}")
+         filter_text = ", ".join(filters) if filters else "Sin filtros adicionales"
+         layout.addWidget(QLabel(f"Filtros aplicados: {filter_text}"))
+         table = QTableWidget(0, len(getattr(self, 'history_headers', [])))
+         table.setHorizontalHeaderLabels(getattr(self, 'history_headers', []))
