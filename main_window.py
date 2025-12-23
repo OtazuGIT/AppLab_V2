@@ -4243,8 +4243,8 @@ class MainWindow(QMainWindow):
             emission_display = emission_time.strftime("%d/%m/%Y %H:%M")
             print_display = emission_display
         pdf = FPDF('P', 'mm', 'A4')
-        pdf.set_margins(12, 12, 12)
-        pdf.set_auto_page_break(True, margin=14)
+        pdf.set_margins(10, 8, 10)
+        pdf.set_auto_page_break(True, margin=10)
         pdf.add_page()
         self._render_order_pdf(
             pdf,
@@ -4412,6 +4412,18 @@ class MainWindow(QMainWindow):
                 return True
             return False
 
+        def normalize_styled_text(text):
+            if text in (None, ""):
+                return "-", False
+            if not isinstance(text, str):
+                return text, False
+            stripped = text.strip()
+            if len(stripped) >= 2 and stripped[0] in {"*", "_"} and stripped[-1] == stripped[0]:
+                inner = stripped[1:-1].strip()
+                if inner:
+                    return inner, True
+            return text, False
+
         def wrap_text(text, max_width):
             if max_width <= 0:
                 return [str(text)]
@@ -4443,32 +4455,37 @@ class MainWindow(QMainWindow):
             return lines or ["-"]
 
         def render_table_header(widths, on_new_page=None):
-            header_height = 6
+            header_height = 5.6
             if ensure_space(header_height) and on_new_page:
                 on_new_page()
                 ensure_space(header_height)
             pdf.set_font("Arial", 'B', 7.2)
-            pdf.set_text_color(255, 255, 255)
-            pdf.set_fill_color(46, 117, 182)
             x_start = pdf.l_margin
             pdf.set_x(x_start)
             headers = ["Parámetro", "Resultado", "Valores de referencia"]
             for idx, title in enumerate(headers):
+                if idx == 2:
+                    pdf.set_fill_color(220, 220, 220)
+                    pdf.set_text_color(50, 50, 50)
+                else:
+                    pdf.set_fill_color(46, 117, 182)
+                    pdf.set_text_color(255, 255, 255)
                 pdf.cell(widths[idx], header_height, self._ensure_latin1(title), border=1, align='C', fill=True)
             pdf.ln(header_height)
             pdf.set_text_color(0, 0, 0)
 
         def render_table_row(texts, widths, on_new_page):
-            line_height = 3.4
-            padding_x = 1.4
-            padding_y = 0.9
+            line_height = 3.1
+            padding_x = 1.3
+            padding_y = 0.8
             pdf.set_font("Arial", '', 6.8)
             lines_by_cell = []
             max_lines = 1
             for idx, text in enumerate(texts):
                 available = max(widths[idx] - 2 * padding_x, 1)
-                lines = wrap_text(text, available)
-                lines_by_cell.append(lines)
+                normalized, is_italic = normalize_styled_text(text)
+                lines = wrap_text(normalized, available)
+                lines_by_cell.append((lines, is_italic))
                 if len(lines) > max_lines:
                     max_lines = len(lines)
             row_height = max_lines * line_height + 2 * padding_y
@@ -4479,17 +4496,24 @@ class MainWindow(QMainWindow):
             y_start = pdf.get_y()
             pdf.set_draw_color(210, 215, 226)
             pdf.set_line_width(0.2)
-            for idx, lines in enumerate(lines_by_cell):
+            for idx, (lines, is_italic) in enumerate(lines_by_cell):
                 cell_width = widths[idx]
                 x_pos = x_start + sum(widths[:idx])
-                pdf.set_fill_color(255, 255, 255)
+                if idx == 2:
+                    pdf.set_fill_color(245, 245, 245)
+                    pdf.set_text_color(70, 70, 70)
+                else:
+                    pdf.set_fill_color(255, 255, 255)
+                    pdf.set_text_color(0, 0, 0)
                 pdf.rect(x_pos, y_start, cell_width, row_height)
                 text_y = y_start + padding_y
                 for line in lines:
                     line = self._ensure_latin1(line)
                     pdf.set_xy(x_pos + padding_x, text_y)
+                    pdf.set_font("Arial", 'I' if is_italic else '', 6.8)
                     pdf.cell(cell_width - 2 * padding_x, line_height, line, border=0)
                     text_y += line_height
+            pdf.set_text_color(0, 0, 0)
             pdf.set_xy(pdf.l_margin, y_start + row_height)
 
         def render_section_row(label, total_width, widths, on_new_page):
@@ -4510,13 +4534,14 @@ class MainWindow(QMainWindow):
         content_width = table_total_width
 
         def estimate_table_row_height(texts, widths):
-            line_height = 3.4
-            padding_x = 1.4
-            padding_y = 0.9
+            line_height = 3.1
+            padding_x = 1.3
+            padding_y = 0.8
             max_lines = 1
             for idx, text in enumerate(texts):
                 available = max(widths[idx] - 2 * padding_x, 1)
-                lines = wrap_text(text, available)
+                normalized, _ = normalize_styled_text(text)
+                lines = wrap_text(normalized, available)
                 if len(lines) > max_lines:
                     max_lines = len(lines)
             return max_lines * line_height + 2 * padding_y
@@ -4527,13 +4552,14 @@ class MainWindow(QMainWindow):
                 status_lines = wrap_text(status_text, content_width)
                 height += max(5, len(status_lines) * 3.8)
             if observation_text:
-                obs_lines = wrap_text(observation_text, content_width)
+                normalized_obs, _ = normalize_styled_text(observation_text)
+                obs_lines = wrap_text(normalized_obs, content_width)
                 height += max(5, len(obs_lines) * 3.8)
             return height
 
         def estimate_structured_height(items, status_text, observation_text):
-            height = 9  # cabecera de prueba
-            height += 6  # cabecera de tabla
+            height = 8.5  # cabecera de prueba
+            height += 5.6  # cabecera de tabla
             for item in items:
                 if item.get("type") == "section":
                     height += 5.2
@@ -4548,9 +4574,10 @@ class MainWindow(QMainWindow):
             return height
 
         def estimate_text_height(text_value, status_text, observation_text):
-            lines = wrap_text(text_value, content_width)
-            height = 9
-            height += max(6, len(lines) * 4)
+            normalized_text, _ = normalize_styled_text(text_value)
+            lines = wrap_text(normalized_text, content_width)
+            height = 8.5
+            height += max(5.5, len(lines) * 3.6)
             height += estimate_status_block(status_text, observation_text)
             return height
 
@@ -4561,7 +4588,7 @@ class MainWindow(QMainWindow):
 
         def draw_test_header(title):
             ensure_space(9)
-            pdf.set_font("Arial", 'B', 8.6)
+            pdf.set_font("Arial", 'B', 8.2)
             pdf.set_text_color(255, 255, 255)
             pdf.set_fill_color(46, 117, 182)
             pdf.cell(0, 6, self._ensure_latin1(title.upper()), ln=1, fill=True)
@@ -4611,8 +4638,9 @@ class MainWindow(QMainWindow):
             else:
                 text_value = structure.get("value", "")
                 ensure_space(6)
-                pdf.set_font("Arial", '', 7)
-                pdf.multi_cell(0, 4, self._ensure_latin1(text_value))
+                normalized_text, is_italic = normalize_styled_text(text_value)
+                pdf.set_font("Arial", 'I' if is_italic else '', 7)
+                pdf.multi_cell(0, 3.8, self._ensure_latin1(normalized_text))
             if status_text:
                 ensure_space(5)
                 pdf.set_font("Arial", 'I', 6.6)
@@ -4621,8 +4649,9 @@ class MainWindow(QMainWindow):
                 pdf.set_text_color(0, 0, 0)
             if observation_text:
                 ensure_space(5)
-                pdf.set_font("Arial", 'I', 6.6)
-                pdf.multi_cell(0, 3.8, self._ensure_latin1(f"Observación: {observation_text}"))
+                normalized_obs, is_obs_italic = normalize_styled_text(observation_text)
+                pdf.set_font("Arial", 'I' if is_obs_italic else '', 6.6)
+                pdf.multi_cell(0, 3.8, self._ensure_latin1(f"Observación: {normalized_obs}"))
             pdf.ln(2)
 
         if ord_inf.get('observations') and str(ord_inf['observations']).strip().upper() not in {"", "N/A"}:
