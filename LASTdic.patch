@@ -1,0 +1,486 @@
+diff --git a/main_window.py b/main_window.py
+index 6a84c92d6c78758a1179ba6254bd5b5930b945bd..9f42d5396ea25098d0bff1f4a44212c860c10f5a 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -1,42 +1,43 @@
+ # main_window.py
+ import copy
+ import datetime
+ import inspect
+ import json
+ import os
+ import re
+ import unicodedata
+ from collections import OrderedDict
+ from PyQt5.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+                              QStackedWidget, QTabWidget, QFormLayout, QScrollArea, QGroupBox, QComboBox,
+                              QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox, QCheckBox,
+                              QDateEdit, QRadioButton, QButtonGroup, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
+                              QSpinBox, QInputDialog, QAbstractItemView, QGridLayout)
+ from PyQt5.QtCore import QDate, QDateTime, Qt, QTimer
+ from PyQt5.QtGui import QColor, QFont
+ from fpdf import FPDF  # Asegúrese de tener fpdf instalado (pip install fpdf)
++from openpyxl import Workbook
+ 
+ LAB_TITLE = "Laboratorio P.S. Iñapari - 002789"
+ 
+ MONTH_NAMES_ES = [
+     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+ ]
+ 
+ CATEGORY_DISPLAY_ORDER = [
+     "HEMATOLOGÍA",
+     "BIOQUÍMICA",
+     "INMUNOLOGÍA",
+     "PRUEBAS RÁPIDAS",
+     "PARASITOLOGÍA",
+     "MICROBIOLOGÍA",
+     "MICROSCOPÍA",
+     "LABORATORIO REFERENCIAL",
+     "OTROS",
+     "TOMA DE MUESTRA"
+ ]
+ 
+ REGISTRY_ABBREVIATIONS = {
+     "hematocrito": "Hto",
+     "hematocrito (hto)": "Hto",
+     "hemoglobina": "Hb",
+@@ -4857,70 +4858,93 @@ class MainWindow(QMainWindow):
+         controls_layout.addWidget(QLabel("Período:"))
+         self.range_combo = QComboBox()
+         self.range_combo.addItems([
+             "Hoy",
+             "Esta semana",
+             "Este mes",
+             "Últimos 30 días",
+             "Rango personalizado"
+         ])
+         controls_layout.addWidget(self.range_combo)
+         controls_layout.addSpacing(10)
+         self.start_date_edit = QDateEdit(QDate.currentDate())
+         self.start_date_edit.setDisplayFormat("dd/MM/yyyy")
+         self.start_date_edit.setCalendarPopup(True)
+         controls_layout.addWidget(QLabel("Desde:"))
+         controls_layout.addWidget(self.start_date_edit)
+         self.end_date_edit = QDateEdit(QDate.currentDate())
+         self.end_date_edit.setDisplayFormat("dd/MM/yyyy")
+         self.end_date_edit.setCalendarPopup(True)
+         controls_layout.addWidget(QLabel("Hasta:"))
+         controls_layout.addWidget(self.end_date_edit)
+         controls_layout.addSpacing(10)
+         self.view_activity_btn = QPushButton("Mostrar registro")
+         self.export_activity_pdf_btn = QPushButton("Exportar PDF")
+         self.export_activity_csv_btn = QPushButton("Exportar CSV")
++        self.export_activity_excel_btn = QPushButton("Exportar Excel")
+         self.export_activity_delivery_btn = QPushButton("Hoja de entrega")
+         self.delete_activity_btn = QPushButton("Eliminar selección")
+         self.delete_activity_btn.setStyleSheet(
+             "QPushButton { background-color: #ffe8e6; color: #c0392b; border-radius: 10px; border: 1px solid #c0392b; }"
+             "QPushButton:hover:!disabled { background-color: #fbd1ce; }"
+         )
+         controls_layout.addWidget(self.view_activity_btn)
+         controls_layout.addWidget(self.export_activity_pdf_btn)
+         controls_layout.addWidget(self.export_activity_csv_btn)
++        controls_layout.addWidget(self.export_activity_excel_btn)
+         controls_layout.addWidget(self.export_activity_delivery_btn)
+         controls_layout.addWidget(self.delete_activity_btn)
+         controls_layout.addStretch()
+         activity_layout.addLayout(controls_layout)
+ 
+         activity_filter_layout = QHBoxLayout()
+         activity_filter_layout.addWidget(QLabel("Búsqueda por muestras:"))
+         self.activity_search_input = QLineEdit()
+         self.activity_search_input.setPlaceholderText("Filtrar por prueba, paciente o estado de muestra")
+         self.activity_search_input.setClearButtonEnabled(True)
+         activity_filter_layout.addWidget(self.activity_search_input)
++        activity_filter_layout.addSpacing(12)
++        activity_filter_layout.addWidget(QLabel("Edad:"))
++        self.activity_min_age_spin = QSpinBox()
++        self.activity_min_age_spin.setRange(-1, 120)
++        self.activity_min_age_spin.setSpecialValueText("Mín.")
++        self.activity_min_age_spin.setValue(-1)
++        self.activity_max_age_spin = QSpinBox()
++        self.activity_max_age_spin.setRange(-1, 120)
++        self.activity_max_age_spin.setSpecialValueText("Máx.")
++        self.activity_max_age_spin.setValue(-1)
++        activity_filter_layout.addWidget(self.activity_min_age_spin)
++        activity_filter_layout.addWidget(QLabel("a"))
++        activity_filter_layout.addWidget(self.activity_max_age_spin)
++        activity_filter_layout.addSpacing(12)
++        activity_filter_layout.addWidget(QLabel("Tipo de prueba:"))
++        self.activity_test_filter = QComboBox()
++        self.activity_test_filter.setSizeAdjustPolicy(QComboBox.AdjustToContents)
++        self.activity_test_filter.addItem("Todas las pruebas", "")
++        for test_name in sorted(self.labdb.test_map.keys()):
++            self.activity_test_filter.addItem(test_name, test_name)
++        activity_filter_layout.addWidget(self.activity_test_filter)
+         activity_filter_layout.addStretch()
+         activity_layout.addLayout(activity_filter_layout)
+ 
+         self.activity_caption = QLabel()
+         self.activity_caption.setStyleSheet("font-weight: bold;")
+         activity_layout.addWidget(self.activity_caption)
+         self.activity_table = QTableWidget(0, 8)
+         self.activity_table.setHorizontalHeaderLabels([
+             "F. muestra / Registro",
+             "Orden",
+             "Paciente",
+             "Documento",
+             "Edad",
+             "Prueba",
+             "Estado",
+             "Resultado"
+         ])
+         self.activity_table.setAlternatingRowColors(True)
+         self.activity_table.horizontalHeader().setStretchLastSection(True)
+         self.activity_table.setSelectionMode(QTableWidget.MultiSelection)
+         activity_layout.addWidget(self.activity_table)
+         self.analysis_tabs.addTab(activity_tab, "Registro de pruebas")
+ 
+         history_tab = QWidget()
+         history_tab_layout = QVBoxLayout(history_tab)
+@@ -4983,52 +5007,56 @@ class MainWindow(QMainWindow):
+ 
+         self.history_preview_group = QGroupBox("Vista previa detallada de la orden")
+         preview_layout = QVBoxLayout(self.history_preview_group)
+         self.history_preview_hint = QLabel("Seleccione una fila para ver los exámenes y datos completos de la orden.")
+         self.history_preview_hint.setStyleSheet("color: #555;")
+         preview_layout.addWidget(self.history_preview_hint)
+         self.history_preview_text = QTextEdit()
+         self.history_preview_text.setReadOnly(True)
+         self.history_preview_text.setMinimumHeight(200)
+         self.history_preview_text.setPlaceholderText("Sin selección. Busque y seleccione una orden para ver el detalle aquí.")
+         preview_layout.addWidget(self.history_preview_text)
+         history_layout.addWidget(self.history_preview_group)
+         history_tab_layout.addWidget(history_group)
+         self.analysis_tabs.addTab(history_tab, "Historial de pacientes")
+         self._stats_controls_ready = False
+         self.stats_mode_combo.currentIndexChanged.connect(self._update_stats_period_controls)
+         self.stats_month_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_quarter_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_year_spin.valueChanged.connect(lambda _: self.refresh_statistics())
+         self._history_results = []
+         self.range_combo.currentIndexChanged.connect(self._update_range_controls)
+         self.activity_search_input.textChanged.connect(self.apply_activity_filter)
+         self.view_activity_btn.clicked.connect(self.load_activity_summary)
+         self.export_activity_pdf_btn.clicked.connect(lambda: self.export_activity_record("pdf"))
+         self.export_activity_csv_btn.clicked.connect(lambda: self.export_activity_record("csv"))
++        self.export_activity_excel_btn.clicked.connect(lambda: self.export_activity_record("xlsx"))
+         self.export_activity_delivery_btn.clicked.connect(self.export_activity_delivery_sheet)
+         self.delete_activity_btn.clicked.connect(self.delete_selected_activity_entries)
++        self.activity_min_age_spin.valueChanged.connect(self.apply_activity_filter)
++        self.activity_max_age_spin.valueChanged.connect(self.apply_activity_filter)
++        self.activity_test_filter.currentIndexChanged.connect(self.apply_activity_filter)
+         self._update_range_controls()
+         self._stats_controls_ready = True
+         self._update_stats_period_controls()
+         self.history_doc_input.returnPressed.connect(self.search_patient_history)
+         self.history_lastname_input.returnPressed.connect(self.search_patient_history)
+         self.history_search_btn.clicked.connect(self.search_patient_history)
+         self.history_open_btn.clicked.connect(self.open_history_order_from_analysis)
+         self.history_table.itemSelectionChanged.connect(self._on_history_selection_changed)
+         self.history_fua_btn.clicked.connect(self.edit_history_fua)
+         self.history_window_btn.clicked.connect(self.open_history_window)
+     def refresh_statistics(self):
+         if not getattr(self, '_stats_controls_ready', False):
+             return
+         period = self._get_statistics_period()
+         start_dt = datetime.datetime.combine(period['start'], datetime.time(0, 0, 0))
+         end_dt = datetime.datetime.combine(period['end'], datetime.time(23, 59, 59))
+         stats = self.labdb.get_statistics(start_dt.isoformat(sep=' '), end_dt.isoformat(sep=' '))
+         summary_lines = [
+             f"Período: {period['label']}",
+             f"Pacientes atendidos: {stats['total_patients']}",
+             f"Órdenes realizadas: {stats['total_orders']}",
+             f"Pruebas realizadas: {stats['total_tests_conducted']}"
+         ]
+         self.stats_label.setText("\n".join(summary_lines))
+         self.stats_table.setRowCount(0)
+@@ -5176,64 +5204,89 @@ class MainWindow(QMainWindow):
+             age_item = QTableWidgetItem(item.get("age", ""))
+             age_item.setTextAlignment(Qt.AlignCenter)
+             self.activity_table.setItem(row_idx, 4, age_item)
+             self.activity_table.setItem(row_idx, 5, QTableWidgetItem(item.get("test", "")))
+             status_text = self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue"))
+             self.activity_table.setItem(row_idx, 6, QTableWidgetItem(status_text or "-"))
+             self.activity_table.setItem(row_idx, 7, QTableWidgetItem(item.get("result", "")))
+         if hasattr(self, 'activity_caption'):
+             query = self.activity_search_input.text().strip() if hasattr(self, 'activity_search_input') else ""
+             filtered_count = len(activity_data)
+             base_total = total_count if total_count is not None else filtered_count
+             if query and base_total != filtered_count:
+                 count_text = f"{filtered_count} coincidencia(s) de {base_total}" + (f" (filtro: \"{query}\")" if query else "")
+             else:
+                 count_text = f"{filtered_count} resultado(s)"
+             self.activity_caption.setText(
+                 f"Registro de pruebas: {description} - {count_text}"
+             )
+ 
+ 
+     def apply_activity_filter(self):
+         cache = getattr(self, '_activity_cache', {}) if hasattr(self, '_activity_cache') else {}
+         data = cache.get("data", [])
+         description = cache.get("description", "")
+         query = self.activity_search_input.text().strip().lower() if hasattr(self, 'activity_search_input') else ""
+-        if not query:
+-            filtered = data
+-        else:
+-            def matches(item):
+-                haystacks = [
+-                    item.get("patient", ""),
+-                    item.get("document", ""),
+-                    item.get("test", ""),
+-                    self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue")) or "",
+-                    item.get("result", ""),
+-                ]
+-                haystacks = [h for h in haystacks if h not in (None, "")]
+-                return any(query in str(value).lower() for value in haystacks)
+-            filtered = [item for item in data if matches(item)]
++        min_age = None
++        max_age = None
++        if hasattr(self, "activity_min_age_spin"):
++            min_val = self.activity_min_age_spin.value()
++            if min_val >= 0:
++                min_age = min_val
++        if hasattr(self, "activity_max_age_spin"):
++            max_val = self.activity_max_age_spin.value()
++            if max_val >= 0:
++                max_age = max_val
++        selected_test = None
++        if hasattr(self, "activity_test_filter"):
++            selected_test = self.activity_test_filter.currentData()
++            if isinstance(selected_test, str):
++                selected_test = selected_test.strip().lower() or None
++
++        def matches(item):
++            age_val = item.get("age_years")
++            if min_age is not None and (age_val is None or age_val < min_age):
++                return False
++            if max_age is not None and (age_val is None or age_val > max_age):
++                return False
++            if selected_test:
++                item_test = str(item.get("test", "")).strip().lower()
++                if item_test != selected_test:
++                    return False
++            if not query:
++                return True
++            haystacks = [
++                item.get("patient", ""),
++                item.get("document", ""),
++                item.get("test", ""),
++                self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue")) or "",
++                item.get("result", ""),
++            ]
++            haystacks = [h for h in haystacks if h not in (None, "")]
++            return any(query in str(value).lower() for value in haystacks)
++
++        filtered = [item for item in data if matches(item)]
+         self._render_activity_rows(filtered, description, total_count=len(data))
+ 
+ 
+     def load_activity_summary(self):
+         if not hasattr(self, 'activity_table'):
+             return
+         start_dt, end_dt, description = self._get_selected_range()
+         rows = self.labdb.get_results_in_range(
+             start_dt.strftime("%Y-%m-%d %H:%M:%S"),
+             end_dt.strftime("%Y-%m-%d %H:%M:%S")
+         )
+         activity_data = []
+         for (
+             test_entry_id,
+             order_id,
+             date_str,
+             sample_date_str,
+             first,
+             last,
+             doc_type,
+             doc_number,
+             sex,
+             birth_date,
+             hcl,
+             origin,
+@@ -5261,50 +5314,51 @@ class MainWindow(QMainWindow):
+                 "patient": {"sex": sex, "birth_date": birth_date},
+                 "order": {"age_years": age_years}
+             }
+             summary_items = self._build_registry_summary(test_name, result, context=context)
+             if not summary_items:
+                 continue
+             result_text = "; ".join(summary_items)
+             activity_data.append({
+                 "entry_id": test_entry_id,
+                 "order_id": order_id,
+                 "date": display_date,
+                 "order_date_raw": date_str,
+                 "sample_date_raw": sample_date_str,
+                 "patient": patient_name,
+                 "document": doc_text,
+                 "doc_type": doc_type,
+                 "doc_number": doc_number,
+                 "birth_date": birth_date,
+                 "hcl": hcl,
+                 "sex": sex,
+                 "origin": origin,
+                 "is_pregnant": is_pregnant,
+                 "gestational_age_weeks": gest_age_weeks,
+                 "expected_delivery_date": expected_delivery,
+                 "age": age_display,
++                "age_years": age_years,
+                 "test": test_name,
+                 "result": result_text,
+                 "summary_items": summary_items,
+                 "category": category,
+                 "order_observations": order_obs,
+                 "insurance_type": insurance_type,
+                 "fua_number": fua_number,
+                 "emitted": None,
+                 "emitted_at": None,
+                 "first_name": first,
+                 "last_name": last,
+                 "sample_status": sample_status,
+                 "sample_issue": sample_issue,
+                 "observation": observation
+             })
+         self._activity_cache = {
+             "data": activity_data,
+             "description": description,
+             "start": start_dt,
+             "end": end_dt
+         }
+         if hasattr(self, 'activity_search_input'):
+             self.apply_activity_filter()
+         else:
+             self._render_activity_rows(activity_data, description)
+@@ -5333,60 +5387,100 @@ class MainWindow(QMainWindow):
+             QMessageBox.warning(self, "Sin datos", "No se pudo identificar los registros seleccionados.")
+             return
+         dialog = ReasonDialog(
+             "Eliminar resultados",
+             "Indique el motivo de eliminación de los resultados seleccionados.",
+             self,
+             placeholder="Motivo (ej. duplicidad, prueba, corrección)"
+         )
+         dialog.text_edit.setPlainText("Duplicidad de registro")
+         if dialog.exec_() != QDialog.Accepted:
+             return
+         reason = dialog.get_reason() or "Sin motivo"
+         removed = 0
+         for entry_id in selected_ids:
+             if self.labdb.delete_order_test(entry_id, reason, self.user.get('id')):
+                 removed += 1
+         if removed:
+             QMessageBox.information(self, "Resultados eliminados", f"Se eliminaron {removed} resultado(s) del registro.")
+             self.load_activity_summary()
+             self.populate_pending_orders()
+             self.populate_completed_orders()
+         else:
+             QMessageBox.warning(self, "Sin cambios", "No se eliminaron registros. Verifique el estado de las órdenes seleccionadas.")
+ 
+     def export_activity_record(self, fmt):
+-        if fmt not in {"pdf", "csv"}:
++        if fmt not in {"pdf", "csv", "xlsx"}:
+             return
+         if not getattr(self, '_activity_cache', None):
+             self.load_activity_summary()
+         cache = getattr(self, '_activity_cache', {"data": [], "description": ""})
+         data = cache.get("data", [])
+         if not data:
+             QMessageBox.information(self, "Sin datos", "No hay registros para el período seleccionado.")
+             return
+         description = cache.get("description", "")
++        if fmt == "xlsx":
++            file_path, _ = QFileDialog.getSaveFileName(
++                self,
++                "Exportar registro",
++                self._ensure_output_directory("registros", "registro.xlsx"),
++                "Archivo Excel (*.xlsx)"
++            )
++            if not file_path:
++                return
++            if not file_path.lower().endswith(".xlsx"):
++                file_path += ".xlsx"
++            try:
++                workbook = Workbook()
++                sheet = workbook.active
++                sheet.title = "Registro de pruebas"
++                headers = ["Fecha", "Orden", "Paciente", "Documento", "Edad", "Prueba", "Estado", "Resultado"]
++                sheet.append(headers)
++                for item in data:
++                    status_text = self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue")) or "-"
++                    sheet.append([
++                        item.get("date", ""),
++                        item.get("order_id", ""),
++                        item.get("patient", ""),
++                        item.get("document", ""),
++                        item.get("age", ""),
++                        item.get("test", ""),
++                        status_text,
++                        item.get("result", "")
++                    ])
++                for column_cells in sheet.columns:
++                    max_len = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column_cells)
++                    adjusted_width = min(max(max_len + 2, 10), 60)
++                    col_letter = column_cells[0].column_letter
++                    sheet.column_dimensions[col_letter].width = adjusted_width
++                workbook.save(file_path)
++            except Exception as exc:
++                QMessageBox.warning(self, "Error", f"No se pudo exportar el archivo Excel:\n{exc}")
++                return
++            QMessageBox.information(self, "Exportado", f"Registro guardado en:\n{file_path}")
++            return
+         if fmt == "csv":
+             file_path, _ = QFileDialog.getSaveFileName(
+                 self,
+                 "Exportar registro",
+                 self._ensure_output_directory("registros", "registro.csv"),
+                 "Archivo CSV (*.csv)"
+             )
+             if not file_path:
+                 return
+             if not file_path.lower().endswith(".csv"):
+                 file_path += ".csv"
+             try:
+                 with open(file_path, 'w', encoding='utf-8') as f:
+                     f.write("Fecha,Orden,Paciente,Documento,Edad,Prueba,Resultado\n")
+                     for item in data:
+                         result_clean = item["result"].replace('"', "'")
+                         line = (
+                             f"{item['date']},{item['order_id']},\"{item['patient']}\"," \
+                             f"{item['document']},{item['age']},\"{item['test']}\",\"{result_clean}\"\n"
+                         )
+                         f.write(line)
+             except Exception as exc:
+                 QMessageBox.warning(self, "Error", f"No se pudo exportar el archivo CSV:\n{exc}")
+                 return
+             QMessageBox.information(self, "Exportado", f"Registro guardado en:\n{file_path}")
+@@ -6100,26 +6194,26 @@ class MainWindow(QMainWindow):
+         success = self.labdb.update_user_profile(self.user.get('id'), full_name, profession, license_code)
+         if success:
+             self.user['full_name'] = full_name
+             self.user['profession'] = profession
+             self.user['license'] = license_code
+             QMessageBox.information(self, "Perfil actualizado", "Los datos del usuario fueron guardados.")
+         else:
+             QMessageBox.warning(self, "Sin cambios", "No se pudieron actualizar los datos del usuario.")
+     def create_user(self):
+         username = self.new_user_input.text().strip()
+         password = self.new_pass_input.text().strip()
+         role_text = self.role_input.currentText()
+         role = "admin" if role_text == "Administrador" else "super"
+         if username == "" or password == "":
+             QMessageBox.warning(self, "Campos vacíos", "Ingrese nombre de usuario y contraseña.")
+             return
+         full_name = self.new_user_full_name.text().strip()
+         profession = self.new_user_profession.text().strip()
+         license_code = self.new_user_license.text().strip()
+         success = self.labdb.create_user(username, password, role, full_name, profession, license_code)
+         if success:
+             QMessageBox.information(self, "Usuario creado", f"Usuario '{username}' creado exitosamente.")
+             self.new_user_input.clear(); self.new_pass_input.clear()
+             self.new_user_full_name.clear(); self.new_user_profession.clear(); self.new_user_license.clear()
+         else:
+-            QMessageBox.warning(self, "Error", "No se pudo crear el usuario. ¿Nombre ya existe?")
+\ No newline at end of file
++            QMessageBox.warning(self, "Error", "No se pudo crear el usuario. ¿Nombre ya existe?")
