@@ -1,0 +1,559 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 9f42d5396ea25098d0bff1f4a44212c860c10f5a..55ef3a0d0b9672846f4ec9f1a93f18bd0368af57 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -1,28 +1,29 @@
+ # main_window.py
+ import copy
+ import datetime
++import html
+ import inspect
+ import json
+ import os
+ import re
+ import unicodedata
+ from collections import OrderedDict
+ from PyQt5.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QVBoxLayout, QHBoxLayout,
+                              QStackedWidget, QTabWidget, QFormLayout, QScrollArea, QGroupBox, QComboBox,
+                              QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox, QCheckBox,
+                              QDateEdit, QRadioButton, QButtonGroup, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
+                              QSpinBox, QInputDialog, QAbstractItemView, QGridLayout)
+ from PyQt5.QtCore import QDate, QDateTime, Qt, QTimer
+ from PyQt5.QtGui import QColor, QFont
+ from fpdf import FPDF  # Asegúrese de tener fpdf instalado (pip install fpdf)
+ from openpyxl import Workbook
+ 
+ LAB_TITLE = "Laboratorio P.S. Iñapari - 002789"
+ 
+ MONTH_NAMES_ES = [
+     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
+ ]
+ 
+ CATEGORY_DISPLAY_ORDER = [
+     "HEMATOLOGÍA",
+@@ -2053,92 +2054,94 @@ class MainWindow(QMainWindow):
+             patient_id,
+             selected_tests,
+             self.user['id'],
+             observations=observations,
+             requested_by=requested_by_text,
+             diagnosis=diagnosis,
+             insurance_type=insurance_type,
+             age_years=age_years,
+             sample_date=sample_date
+         )
+         sample_display = self._format_date_display(sample_date, "-")
+         patient_display = f"{first_name} {last_name}".strip()
+         if not patient_display:
+             patient_display = "Paciente registrado"
+         message_lines = [
+             patient_display,
+             f"F. toma de muestra: {sample_display}",
+             f"Orden #{order_id} registrada correctamente."
+         ]
+         QMessageBox.information(self, "Registro exitoso", "\n".join(message_lines))
+         # Habilitar botón para ir a anotar resultados de esta orden
+         btn_to_results.setEnabled(True)
+         self.last_order_registered = order_id
+         # Actualizar historial de solicitantes para próximas atenciones
+         self.populate_requesters(keep_current=True)
++        self.clear_registration_form()
+     def clear_registration_form(self):
+         # Limpiar todos los campos del formulario de registro
+         self.input_doc_number.clear(); self.input_first_name.clear(); self.input_last_name.clear()
+         self.input_birth_date.blockSignals(True)
+         self.input_birth_date.setDate(QDate.currentDate())
+         self.input_birth_date.blockSignals(False)
+         self.input_age.clear()
+         self.sex_male_radio.setChecked(True)
+         if hasattr(self, 'insurance_combo'):
+             self.insurance_combo.setCurrentIndex(0)
+         self.set_origin_value("P.S Iñapari")
+         self.input_hcl.clear()
+         self.input_height.clear(); self.input_weight.clear(); self.input_blood_pressure.clear()
+         self.input_diagnosis.clear()
+         self.input_observations.setText("N/A")
+         if hasattr(self, 'pregnancy_checkbox'):
+             self.pregnancy_checkbox.blockSignals(True)
+             self.pregnancy_checkbox.setChecked(False)
+             self.pregnancy_checkbox.blockSignals(False)
+             self.on_pregnancy_toggle(Qt.Unchecked)
+         if hasattr(self, 'gestational_weeks_spin'):
+             self.gestational_weeks_spin.setValue(0)
+         if hasattr(self, 'expected_delivery_date'):
+             self.expected_delivery_date.setDate(QDate.currentDate())
+         if hasattr(self, 'sample_date_edit'):
+             self.sample_date_edit.blockSignals(True)
+             self.sample_date_edit.setDate(QDate.currentDate())
+             self.sample_date_edit.blockSignals(False)
+         if hasattr(self, 'sample_today_checkbox'):
+             self.sample_today_checkbox.setChecked(True)
+         if self.input_requested_by.count():
+             self.input_requested_by.setCurrentIndex(0)
+         if self.input_requested_by.lineEdit():
+             self.input_requested_by.lineEdit().clear()
+         for cb in getattr(self, 'test_checkboxes', []):
+             cb.setChecked(False)
+         self.update_pregnancy_visibility()
+         self.update_test_selection_count()
+ 
+     def go_to_results(self):
+         # Navegar a la página de resultados para la última orden registrada
+         if self.last_order_registered:
++            self.clear_registration_form()
+             self.stack.setCurrentWidget(self.page_resultados)
+             self.populate_pending_orders()
+             # Seleccionar automáticamente la orden recién creada en el combo
+             self._select_order_in_combo(self.combo_orders, self.last_order_registered)
+             self.load_order_fields()
+     def init_resultados_page(self):
+         layout = QVBoxLayout(self.page_resultados)
+         search_layout = QHBoxLayout()
+         search_label = QLabel("Buscar:")
+         self.order_search_input = QLineEdit()
+         self.order_search_input.setPlaceholderText("Nombre, documento o # de orden")
+         search_layout.addWidget(search_label)
+         search_layout.addWidget(self.order_search_input, 1)
+         sort_label = QLabel("Ordenar:")
+         self.pending_sort_combo = QComboBox()
+         self.pending_sort_combo.addItems([
+             "Fecha (recientes primero)",
+             "Fecha (antiguas primero)",
+             "Número de orden (descendente)",
+             "Número de orden (ascendente)"
+         ])
+         search_layout.addWidget(sort_label)
+         search_layout.addWidget(self.pending_sort_combo)
+         search_layout.addStretch()
+         layout.addLayout(search_layout)
+@@ -3422,50 +3425,53 @@ class MainWindow(QMainWindow):
+             summary_items = record.get("summary_items")
+             if not summary_items:
+                 result_value = record.get("result", "")
+                 if isinstance(result_value, str) and result_value.strip():
+                     summary_items = [result_value.strip()]
+                 elif not self._is_blank_result(result_value):
+                     summary_items = [str(result_value)]
+             if not summary_items:
+                 continue
+             order_id = record.get("order_id")
+             if order_id is None:
+                 continue
+             entry = grouped.get(order_id)
+             if not entry:
+                 entry = {
+                     "order_id": order_id,
+                     "date": record.get("date", ""),
+                     "order_date_raw": record.get("order_date_raw"),
+                     "sample_date_raw": record.get("sample_date_raw"),
+                     "patient": record.get("patient", ""),
+                     "document": record.get("document", ""),
+                     "doc_type": record.get("doc_type"),
+                     "doc_number": record.get("doc_number"),
+                     "birth_date": record.get("birth_date"),
+                     "hcl": record.get("hcl"),
++                    "height": record.get("height"),
++                    "weight": record.get("weight"),
++                    "blood_pressure": record.get("blood_pressure"),
+                     "sex": record.get("sex"),
+                     "origin": record.get("origin"),
+                     "is_pregnant": record.get("is_pregnant"),
+                     "gestational_age_weeks": record.get("gestational_age_weeks"),
+                     "expected_delivery_date": record.get("expected_delivery_date"),
+                     "age": record.get("age", ""),
+                     "first_name": record.get("first_name"),
+                     "last_name": record.get("last_name"),
+                     "observations": record.get("order_observations"),
+                     "insurance_type": record.get("insurance_type"),
+                     "fua_number": record.get("fua_number"),
+                     "emitted": record.get("emitted"),
+                     "emitted_at": record.get("emitted_at"),
+                     "groups": {key: [] for key in group_keys},
+                     "tests": [],
+                     "sample_statuses": []
+                 }
+                 grouped[order_id] = entry
+             group_key = self._map_category_group(record.get("category"))
+             for item in summary_items:
+                 cleaned = str(item).strip()
+                 if cleaned:
+                     entry["groups"].setdefault(group_key, []).append(cleaned)
+             test_name = record.get("test")
+             if test_name:
+@@ -4990,51 +4996,52 @@ class MainWindow(QMainWindow):
+             "Hematología",
+             "Bioquímica",
+             "Micro/Parasitología",
+             "Otros exámenes",
+             "Emitido"
+         ]
+         self.history_table = QTableWidget(0, len(history_headers))
+         self.history_table.setHorizontalHeaderLabels(history_headers)
+         self.history_table.setSelectionBehavior(QTableWidget.SelectRows)
+         self.history_table.setSelectionMode(QTableWidget.SingleSelection)
+         self.history_table.setAlternatingRowColors(True)
+         self.history_table.setWordWrap(True)
+         self.history_table.verticalHeader().setVisible(False)
+         self.history_table.horizontalHeader().setStretchLastSection(True)
+         self.history_headers = history_headers
+         self.history_column_map = {header: idx for idx, header in enumerate(history_headers)}
+         history_layout.addWidget(self.history_table)
+ 
+         self.history_preview_group = QGroupBox("Vista previa detallada de la orden")
+         preview_layout = QVBoxLayout(self.history_preview_group)
+         self.history_preview_hint = QLabel("Seleccione una fila para ver los exámenes y datos completos de la orden.")
+         self.history_preview_hint.setStyleSheet("color: #555;")
+         preview_layout.addWidget(self.history_preview_hint)
+         self.history_preview_text = QTextEdit()
+         self.history_preview_text.setReadOnly(True)
+-        self.history_preview_text.setMinimumHeight(200)
++        self.history_preview_text.setMinimumHeight(260)
++        self.history_preview_text.setStyleSheet("QTextEdit { padding: 12px; }")
+         self.history_preview_text.setPlaceholderText("Sin selección. Busque y seleccione una orden para ver el detalle aquí.")
+         preview_layout.addWidget(self.history_preview_text)
+         history_layout.addWidget(self.history_preview_group)
+         history_tab_layout.addWidget(history_group)
+         self.analysis_tabs.addTab(history_tab, "Historial de pacientes")
+         self._stats_controls_ready = False
+         self.stats_mode_combo.currentIndexChanged.connect(self._update_stats_period_controls)
+         self.stats_month_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_quarter_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_year_spin.valueChanged.connect(lambda _: self.refresh_statistics())
+         self._history_results = []
+         self.range_combo.currentIndexChanged.connect(self._update_range_controls)
+         self.activity_search_input.textChanged.connect(self.apply_activity_filter)
+         self.view_activity_btn.clicked.connect(self.load_activity_summary)
+         self.export_activity_pdf_btn.clicked.connect(lambda: self.export_activity_record("pdf"))
+         self.export_activity_csv_btn.clicked.connect(lambda: self.export_activity_record("csv"))
+         self.export_activity_excel_btn.clicked.connect(lambda: self.export_activity_record("xlsx"))
+         self.export_activity_delivery_btn.clicked.connect(self.export_activity_delivery_sheet)
+         self.delete_activity_btn.clicked.connect(self.delete_selected_activity_entries)
+         self.activity_min_age_spin.valueChanged.connect(self.apply_activity_filter)
+         self.activity_max_age_spin.valueChanged.connect(self.apply_activity_filter)
+         self.activity_test_filter.currentIndexChanged.connect(self.apply_activity_filter)
+         self._update_range_controls()
+         self._stats_controls_ready = True
+         self._update_stats_period_controls()
+@@ -5830,99 +5837,188 @@ class MainWindow(QMainWindow):
+                 pdf.rect(row_start_x, row_start_y, width, row_height)
+                 text_y = row_start_y + padding_y
+                 for line in wrapped[idx]:
+                     pdf.set_xy(row_start_x + padding_x, text_y)
+                     pdf.cell(width - 2 * padding_x, line_height, line, border=0)
+                     text_y += line_height
+                 row_start_x += width
+             pdf.set_xy(pdf.l_margin, row_start_y + row_height)
+         pdf.set_margins(prev_left, prev_top, prev_right)
+         pdf.set_auto_page_break(prev_auto, margin=prev_bottom)
+ 
+     def _clear_history_table(self):
+         if hasattr(self, 'history_table'):
+             self.history_table.setRowCount(0)
+         self._history_results = []
+         if hasattr(self, 'history_open_btn'):
+             self.history_open_btn.setEnabled(False)
+         if hasattr(self, 'history_window_btn'):
+             self.history_window_btn.setEnabled(False)
+         self._render_history_preview(None)
+ 
+     def _render_history_preview(self, entry):
+         if not hasattr(self, 'history_preview_text'):
+             return
+         if not entry:
+-            self.history_preview_text.setPlainText(
+-                "Seleccione una orden para ver aquí un resumen completo de exámenes y datos del paciente."
++            self.history_preview_text.setHtml(
++                "<p style='color:#666;'>Seleccione una orden para ver aquí un resumen completo de exámenes y datos del paciente.</p>"
+             )
+             return
++        def esc(value, fallback="—"):
++            if value in (None, ""):
++                return fallback
++            return html.escape(str(value))
+ 
+-        def add_section(title, content_lines):
+-            clean_lines = [line for line in content_lines if str(line).strip()]
+-            if not clean_lines:
+-                return
+-            lines.append(title)
+-            for line in clean_lines:
+-                lines.append(f"  {line}")
+-            lines.append("")
++        def format_measure(value, unit):
++            formatted = self._format_number(value)
++            return f"{esc(formatted)} {unit}" if formatted else "—"
++
++        def to_title(text):
++            return text.title() if text else ""
++
++        first = to_title(" ".join(str(entry.get("first_name") or "").split()))
++        last = to_title(" ".join(str(entry.get("last_name") or "").split()))
++        if last and first:
++            patient_name = f"{last}, {first}"
++        elif last:
++            patient_name = last
++        elif first:
++            patient_name = first
++        else:
++            patient_name = to_title(" ".join(str(entry.get("patient") or "").split())) or "—"
+ 
+-        lines = []
+         header_date = self._format_date_for_registry(entry)
+         emitted_text = self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
+         insurance_text = self._format_insurance_display(entry.get("insurance_type"))
+         fua_text = self._format_fua_display(entry)
+-        lines.append(f"Orden #{entry.get('order_id', '-')}: {header_date or '-'}")
+-        lines.append(f"Seguro: {insurance_text} | FUA: {fua_text} | Emitido: {emitted_text}")
+-        lines.append("")
+-
+-        patient_block = self._format_patient_block_for_registry(entry)
+-        add_section("Datos del paciente", patient_block.splitlines())
++        doc_type_value = entry.get("doc_type")
++        doc_label = doc_type_value.upper() if doc_type_value else "Doc."
++        doc_number = entry.get("doc_number") or "—"
++        birth_display = self._format_short_date(entry.get("birth_date"))
++        hcl_display = entry.get("hcl") or "—"
++        sex_display = self._format_sex_display(entry.get("sex"))
++        age_display = entry.get("age") or "—"
++        origin_display = entry.get("origin") or "—"
++        pregnancy_line = self._format_registry_pregnancy_line(entry)
++        is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
++        pregnancy_display = pregnancy_line.replace("Gestante:", "Gestación:") if pregnancy_line else "Gestación: No"
++        pregnancy_short = "Sí" if is_pregnant else "No"
++        pregnancy_detail = pregnancy_display.replace("Gestación:", "").strip() or pregnancy_short
++        height_display = format_measure(entry.get("height"), "cm")
++        weight_display = format_measure(entry.get("weight"), "kg")
++        bp_display = esc(entry.get("blood_pressure")) if entry.get("blood_pressure") else "—"
++
++        def list_items(values):
++            cleaned = [esc(item) for item in values if str(item).strip()]
++            if not cleaned:
++                return "<p class='muted'>—</p>"
++            return "<ul>" + "".join(f"<li>{item}</li>" for item in cleaned) + "</ul>"
+ 
+         sample_status_text = self._format_history_sample_status(entry)
+-        add_section("Estado de muestras", sample_status_text.split("\n"))
+-
++        sample_lines = [line for line in (sample_status_text or "").split("\n") if line.strip()]
+         observations = entry.get("observations")
+-        if observations:
+-            obs_clean = " ".join(str(observations).split())
+-            add_section("Observaciones de la orden", [obs_clean])
+-
+-        groups = entry.get("groups", {})
++        obs_clean = " ".join(str(observations).split()) if observations else ""
++
++        groups = entry.get("groups", {}) if isinstance(entry.get("groups", {}), dict) else {}
++        tests = sorted(set(entry.get("tests", []) or []))
++
++        html_output = f"""
++        <html>
++        <head>
++        <style>
++        body {{ font-family: "Segoe UI", sans-serif; font-size: 11pt; color: #1d1d1d; }}
++        .meta {{ color: #555; font-size: 10.5pt; margin-bottom: 6px; }}
++        .section-title {{ font-weight: 700; font-size: 12pt; margin: 12px 0 6px; }}
++        .grid {{ width: 100%; border-collapse: collapse; margin-bottom: 6px; }}
++        .grid td {{ padding: 4px 8px; vertical-align: top; }}
++        .label {{ color: #666; font-weight: 600; }}
++        .muted {{ color: #777; margin: 0; }}
++        ul {{ margin: 4px 0 8px 18px; }}
++        </style>
++        </head>
++        <body>
++        <div class="section-title">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
++        <div class="meta">Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong></div>
++
++        <div class="section-title">Datos del paciente</div>
++        <table class="grid">
++          <tr>
++            <td><span class="label">Paciente:</span> {esc(patient_name)}</td>
++            <td><span class="label">Documento:</span> {esc(doc_label)} {esc(doc_number)}</td>
++          </tr>
++          <tr>
++            <td><span class="label">F. Nacimiento:</span> {esc(birth_display)}</td>
++            <td><span class="label">Edad:</span> {esc(age_display)}</td>
++          </tr>
++          <tr>
++            <td><span class="label">Sexo:</span> {esc(sex_display)}</td>
++            <td><span class="label">Procedencia:</span> {esc(origin_display)}</td>
++          </tr>
++          <tr>
++            <td><span class="label">HCL:</span> {esc(hcl_display)}</td>
++            <td><span class="label">Gestación:</span> {esc(pregnancy_short)}</td>
++          </tr>
++        </table>
++
++        <div class="section-title">Signos y medidas</div>
++        <table class="grid">
++          <tr>
++            <td><span class="label">Talla:</span> {height_display}</td>
++            <td><span class="label">Peso:</span> {weight_display}</td>
++          </tr>
++          <tr>
++            <td><span class="label">Presión arterial:</span> {bp_display}</td>
++            <td><span class="label">Gestación:</span> {esc(pregnancy_detail)}</td>
++          </tr>
++        </table>
++
++        <div class="section-title">Estado de muestras</div>
++        {list_items(sample_lines)}
++        """
++        if obs_clean:
++            html_output += f"""
++            <div class="section-title">Observaciones de la orden</div>
++            <p>{esc(obs_clean)}</p>
++            """
++        html_output += f"""
++        <div class="section-title">Exámenes en la orden</div>
++        {list_items(tests)}
++        """
+         category_labels = [
+             ("Hematología", "hematology"),
+             ("Bioquímica", "biochemistry"),
+             ("Micro/Parasitología", "micro_parasito"),
+-            ("Otros exámenes", "others")
++            ("Otros exámenes", "others"),
+         ]
+         for label, key in category_labels:
+             items = groups.get(key, []) if isinstance(groups, dict) else []
+-            add_section(label, [f"• {item}" for item in items])
+-
+-        tests = entry.get("tests", [])
+-        add_section("Exámenes en la orden", [f"• {test}" for test in sorted(set(tests))])
+-
+-        self.history_preview_text.setPlainText("\n".join(lines).rstrip())
++            html_output += f"""
++            <div class="section-title">{esc(label)}</div>
++            {list_items(items)}
++            """
++        html_output += "</body></html>"
++        self.history_preview_text.setHtml(html_output)
+ 
+     def _on_history_selection_changed(self):
+         if not hasattr(self, 'history_table'):
+             return
+         selection = self.history_table.selectionModel()
+         has_selection = bool(selection.selectedRows()) if selection else False
+         if hasattr(self, 'history_open_btn'):
+             self.history_open_btn.setEnabled(has_selection)
+         if hasattr(self, 'history_fua_btn'):
+             enable_fua = False
+             tooltip = ""
+             if has_selection and selection:
+                 indexes = selection.selectedRows()
+                 if indexes:
+                     row = indexes[0].row()
+                     history_items = getattr(self, '_history_results', [])
+                     if 0 <= row < len(history_items):
+                         entry = history_items[row]
+                         insurance = (entry.get("insurance_type") or "").strip().lower()
+                         if insurance == "particular":
+                             tooltip = "Las atenciones particulares no requieren FUA."
+                         else:
+                             enable_fua = True
+             self.history_fua_btn.setEnabled(enable_fua)
+             self.history_fua_btn.setToolTip(tooltip)
+@@ -5949,91 +6045,97 @@ class MainWindow(QMainWindow):
+         if doc_number == "" and last_name == "":
+             QMessageBox.warning(self, "Filtro requerido", "Ingrese un DNI o apellidos para realizar la búsqueda.")
+             return
+         if doc_number and not doc_number.isdigit():
+             QMessageBox.warning(self, "Formato inválido", "El DNI debe contener solo números.")
+             return
+         self._clear_history_table()
+         rows = self.labdb.get_patient_history(doc_number=doc_number or None, doc_type="DNI" if doc_number else None, last_name=last_name or None)
+         records = []
+         for row in rows:
+             (
+                 order_id,
+                 date_str,
+                 sample_date_str,
+                 test_name,
+                 raw_result,
+                 category,
+                 first_name,
+                 patient_last_name,
+                 doc_type,
+                 doc_value,
+                 sex,
+                 birth_date,
+                 hcl,
+                 origin,
++                height,
++                weight,
++                blood_pressure,
+                 is_pregnant,
+                 gest_age_weeks,
+                 expected_delivery,
+                 age_years,
+                 order_obs,
+                 insurance_type,
+                 fua_number,
+                 emitted,
+                 emitted_at,
+                 sample_status,
+                 sample_issue,
+                 observation,
+                 pending_since,
+                 entry_id
+             ) = row
+             display_date = self._format_date_display(sample_date_str, "-")
+             if display_date == "-":
+                 display_date = self._format_datetime_display(date_str, date_str or "-")
+             patient_name = " ".join(part for part in [(first_name or "").upper(), (patient_last_name or "").upper()] if part).strip() or "-"
+             doc_text = " ".join(part for part in (doc_type, doc_value) if part).strip() or "-"
+             age_display = str(age_years) if age_years not in (None, "") else "-"
+             context = {
+                 "patient": {"sex": sex, "birth_date": birth_date},
+                 "order": {"age_years": age_years}
+             }
+             summary_items = self._build_registry_summary(test_name, raw_result, context=context)
+             if not summary_items:
+                 continue
+             result_text = "; ".join(summary_items)
+             records.append({
+                 "entry_id": entry_id,
+                 "order_id": order_id,
+                 "date": display_date,
+                 "order_date_raw": date_str,
+                 "sample_date_raw": sample_date_str,
+                 "patient": patient_name,
+                 "document": doc_text,
+                 "doc_type": doc_type,
+                 "doc_number": doc_value,
+                 "birth_date": birth_date,
+                 "hcl": hcl,
++                "height": height,
++                "weight": weight,
++                "blood_pressure": blood_pressure,
+                 "sex": sex,
+                 "origin": origin,
+                 "is_pregnant": is_pregnant,
+                 "gestational_age_weeks": gest_age_weeks,
+                 "expected_delivery_date": expected_delivery,
+                 "age": age_display,
+                 "test": test_name,
+                 "result": result_text,
+                 "summary_items": summary_items,
+                 "category": category,
+                 "order_observations": order_obs,
+                 "insurance_type": insurance_type,
+                 "fua_number": fua_number,
+                 "emitted": emitted,
+                 "emitted_at": emitted_at,
+                 "first_name": first_name,
+                 "last_name": patient_last_name,
+                 "sample_status": sample_status,
+                 "sample_issue": sample_issue,
+                 "observation": observation,
+                 "pending_since": pending_since
+             })
+         aggregated = self._aggregate_results_by_order(records)
+         self._history_results = aggregated
+         self._populate_history_table_widget(self.history_table, aggregated)
+ 
+EOF
+)

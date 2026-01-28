@@ -995,7 +995,8 @@ class LabDB:
         query = f"""
             SELECT o.id, o.date, o.sample_date, t.name, ot.result, t.category,
                    p.first_name, p.last_name, p.doc_type, p.doc_number,
-                   p.sex, p.birth_date, p.hcl, p.origin, p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
+                   p.sex, p.birth_date, p.hcl, p.origin, p.height, p.weight, p.blood_pressure,
+                   p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
                    o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
                    ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id
             FROM orders o

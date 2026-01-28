@@ -1,6 +1,7 @@
 # main_window.py
 import copy
 import datetime
+import html
 import inspect
 import json
 import os
@@ -2075,6 +2076,7 @@ class MainWindow(QMainWindow):
         self.last_order_registered = order_id
         # Actualizar historial de solicitantes para próximas atenciones
         self.populate_requesters(keep_current=True)
+        self.clear_registration_form()
     def clear_registration_form(self):
         # Limpiar todos los campos del formulario de registro
         self.input_doc_number.clear(); self.input_first_name.clear(); self.input_last_name.clear()
@@ -2117,6 +2119,7 @@ class MainWindow(QMainWindow):
     def go_to_results(self):
         # Navegar a la página de resultados para la última orden registrada
         if self.last_order_registered:
+            self.clear_registration_form()
             self.stack.setCurrentWidget(self.page_resultados)
             self.populate_pending_orders()
             # Seleccionar automáticamente la orden recién creada en el combo
@@ -3444,6 +3447,9 @@ class MainWindow(QMainWindow):
                     "doc_number": record.get("doc_number"),
                     "birth_date": record.get("birth_date"),
                     "hcl": record.get("hcl"),
+                    "height": record.get("height"),
+                    "weight": record.get("weight"),
+                    "blood_pressure": record.get("blood_pressure"),
                     "sex": record.get("sex"),
                     "origin": record.get("origin"),
                     "is_pregnant": record.get("is_pregnant"),
@@ -5012,7 +5018,8 @@ class MainWindow(QMainWindow):
         preview_layout.addWidget(self.history_preview_hint)
         self.history_preview_text = QTextEdit()
         self.history_preview_text.setReadOnly(True)
-        self.history_preview_text.setMinimumHeight(200)
+        self.history_preview_text.setMinimumHeight(260)
+        self.history_preview_text.setStyleSheet("QTextEdit { padding: 12px; }")
         self.history_preview_text.setPlaceholderText("Sin selección. Busque y seleccione una orden para ver el detalle aquí.")
         preview_layout.addWidget(self.history_preview_text)
         history_layout.addWidget(self.history_preview_group)
@@ -5852,55 +5859,144 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'history_preview_text'):
             return
         if not entry:
-            self.history_preview_text.setPlainText(
-                "Seleccione una orden para ver aquí un resumen completo de exámenes y datos del paciente."
+            self.history_preview_text.setHtml(
+                "<p style='color:#666;'>Seleccione una orden para ver aquí un resumen completo de exámenes y datos del paciente.</p>"
             )
             return
+        def esc(value, fallback="—"):
+            if value in (None, ""):
+                return fallback
+            return html.escape(str(value))
 
-        def add_section(title, content_lines):
-            clean_lines = [line for line in content_lines if str(line).strip()]
-            if not clean_lines:
-                return
-            lines.append(title)
-            for line in clean_lines:
-                lines.append(f"  {line}")
-            lines.append("")
+        def format_measure(value, unit):
+            formatted = self._format_number(value)
+            return f"{esc(formatted)} {unit}" if formatted else "—"
 
-        lines = []
+        def to_title(text):
+            return text.title() if text else ""
+
+        first = to_title(" ".join(str(entry.get("first_name") or "").split()))
+        last = to_title(" ".join(str(entry.get("last_name") or "").split()))
+        if last and first:
+            patient_name = f"{last}, {first}"
+        elif last:
+            patient_name = last
+        elif first:
+            patient_name = first
+        else:
+            patient_name = to_title(" ".join(str(entry.get("patient") or "").split())) or "—"
+
         header_date = self._format_date_for_registry(entry)
         emitted_text = self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
         insurance_text = self._format_insurance_display(entry.get("insurance_type"))
         fua_text = self._format_fua_display(entry)
-        lines.append(f"Orden #{entry.get('order_id', '-')}: {header_date or '-'}")
-        lines.append(f"Seguro: {insurance_text} | FUA: {fua_text} | Emitido: {emitted_text}")
-        lines.append("")
+        doc_type_value = entry.get("doc_type")
+        doc_label = doc_type_value.upper() if doc_type_value else "Doc."
+        doc_number = entry.get("doc_number") or "—"
+        birth_display = self._format_short_date(entry.get("birth_date"))
+        hcl_display = entry.get("hcl") or "—"
+        sex_display = self._format_sex_display(entry.get("sex"))
+        age_display = entry.get("age") or "—"
+        origin_display = entry.get("origin") or "—"
+        pregnancy_line = self._format_registry_pregnancy_line(entry)
+        is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
+        pregnancy_display = pregnancy_line.replace("Gestante:", "Gestación:") if pregnancy_line else "Gestación: No"
+        pregnancy_short = "Sí" if is_pregnant else "No"
+        pregnancy_detail = pregnancy_display.replace("Gestación:", "").strip() or pregnancy_short
+        height_display = format_measure(entry.get("height"), "cm")
+        weight_display = format_measure(entry.get("weight"), "kg")
+        bp_display = esc(entry.get("blood_pressure")) if entry.get("blood_pressure") else "—"
 
-        patient_block = self._format_patient_block_for_registry(entry)
-        add_section("Datos del paciente", patient_block.splitlines())
+        def list_items(values):
+            cleaned = [esc(item) for item in values if str(item).strip()]
+            if not cleaned:
+                return "<p class='muted'>—</p>"
+            return "<ul>" + "".join(f"<li>{item}</li>" for item in cleaned) + "</ul>"
 
         sample_status_text = self._format_history_sample_status(entry)
-        add_section("Estado de muestras", sample_status_text.split("\n"))
-
+        sample_lines = [line for line in (sample_status_text or "").split("\n") if line.strip()]
         observations = entry.get("observations")
-        if observations:
-            obs_clean = " ".join(str(observations).split())
-            add_section("Observaciones de la orden", [obs_clean])
+        obs_clean = " ".join(str(observations).split()) if observations else ""
 
-        groups = entry.get("groups", {})
+        groups = entry.get("groups", {}) if isinstance(entry.get("groups", {}), dict) else {}
+        tests = sorted(set(entry.get("tests", []) or []))
+
+        html_output = f"""
+        <html>
+        <head>
+        <style>
+        body {{ font-family: "Segoe UI", sans-serif; font-size: 11pt; color: #1d1d1d; }}
+        .meta {{ color: #555; font-size: 10.5pt; margin-bottom: 6px; }}
+        .section-title {{ font-weight: 700; font-size: 12pt; margin: 12px 0 6px; }}
+        .grid {{ width: 100%; border-collapse: collapse; margin-bottom: 6px; }}
+        .grid td {{ padding: 4px 8px; vertical-align: top; }}
+        .label {{ color: #666; font-weight: 600; }}
+        .muted {{ color: #777; margin: 0; }}
+        ul {{ margin: 4px 0 8px 18px; }}
+        </style>
+        </head>
+        <body>
+        <div class="section-title">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
+        <div class="meta">Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong></div>
+
+        <div class="section-title">Datos del paciente</div>
+        <table class="grid">
+          <tr>
+            <td><span class="label">Paciente:</span> {esc(patient_name)}</td>
+            <td><span class="label">Documento:</span> {esc(doc_label)} {esc(doc_number)}</td>
+          </tr>
+          <tr>
+            <td><span class="label">F. Nacimiento:</span> {esc(birth_display)}</td>
+            <td><span class="label">Edad:</span> {esc(age_display)}</td>
+          </tr>
+          <tr>
+            <td><span class="label">Sexo:</span> {esc(sex_display)}</td>
+            <td><span class="label">Procedencia:</span> {esc(origin_display)}</td>
+          </tr>
+          <tr>
+            <td><span class="label">HCL:</span> {esc(hcl_display)}</td>
+            <td><span class="label">Gestación:</span> {esc(pregnancy_short)}</td>
+          </tr>
+        </table>
+
+        <div class="section-title">Signos y medidas</div>
+        <table class="grid">
+          <tr>
+            <td><span class="label">Talla:</span> {height_display}</td>
+            <td><span class="label">Peso:</span> {weight_display}</td>
+          </tr>
+          <tr>
+            <td><span class="label">Presión arterial:</span> {bp_display}</td>
+            <td><span class="label">Gestación:</span> {esc(pregnancy_detail)}</td>
+          </tr>
+        </table>
+
+        <div class="section-title">Estado de muestras</div>
+        {list_items(sample_lines)}
+        """
+        if obs_clean:
+            html_output += f"""
+            <div class="section-title">Observaciones de la orden</div>
+            <p>{esc(obs_clean)}</p>
+            """
+        html_output += f"""
+        <div class="section-title">Exámenes en la orden</div>
+        {list_items(tests)}
+        """
         category_labels = [
             ("Hematología", "hematology"),
             ("Bioquímica", "biochemistry"),
             ("Micro/Parasitología", "micro_parasito"),
-            ("Otros exámenes", "others")
+            ("Otros exámenes", "others"),
         ]
         for label, key in category_labels:
             items = groups.get(key, []) if isinstance(groups, dict) else []
-            add_section(label, [f"• {item}" for item in items])
-
-        tests = entry.get("tests", [])
-        add_section("Exámenes en la orden", [f"• {test}" for test in sorted(set(tests))])
-
-        self.history_preview_text.setPlainText("\n".join(lines).rstrip())
+            html_output += f"""
+            <div class="section-title">{esc(label)}</div>
+            {list_items(items)}
+            """
+        html_output += "</body></html>"
+        self.history_preview_text.setHtml(html_output)
 
     def _on_history_selection_changed(self):
         if not hasattr(self, 'history_table'):
@@ -5971,6 +6067,9 @@ class MainWindow(QMainWindow):
                 birth_date,
                 hcl,
                 origin,
+                height,
+                weight,
+                blood_pressure,
                 is_pregnant,
                 gest_age_weeks,
                 expected_delivery,
@@ -6012,6 +6111,9 @@ class MainWindow(QMainWindow):
                 "doc_number": doc_value,
                 "birth_date": birth_date,
                 "hcl": hcl,
+                "height": height,
+                "weight": weight,
+                "blood_pressure": blood_pressure,
                 "sex": sex,
                 "origin": origin,
                 "is_pregnant": is_pregnant,

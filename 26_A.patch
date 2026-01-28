@@ -1,0 +1,62 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/database.py b/database.py
+index c321090ac5f6ff5b2968c72dcbf33ea57756ae33..eae65340ff7f526411580d00c179232a84c604d7 100644
+--- a/database.py
++++ b/database.py
+@@ -973,51 +973,52 @@ class LabDB:
+         self.cur.execute(
+             "UPDATE orders SET fua_number=? WHERE id=?",
+             (value, order_id)
+         )
+         self.conn.commit()
+         return True
+ 
+     def get_patient_history(self, doc_number=None, doc_type=None, last_name=None):
+         if not doc_number and not last_name:
+             return []
+         params = []
+         conditions = ["(o.deleted IS NULL OR o.deleted=0)", "(ot.deleted IS NULL OR ot.deleted=0)"]
+         if doc_number:
+             conditions.append("p.doc_number = ?")
+             params.append(doc_number)
+         if doc_type:
+             conditions.append("p.doc_type = ?")
+             params.append(doc_type)
+         if last_name:
+             conditions.append("UPPER(p.last_name) LIKE UPPER(?)")
+             params.append(f"%{last_name}%")
+         where_clause = " AND ".join(conditions)
+         query = f"""
+             SELECT o.id, o.date, o.sample_date, t.name, ot.result, t.category,
+                    p.first_name, p.last_name, p.doc_type, p.doc_number,
+-                   p.sex, p.birth_date, p.hcl, p.origin, p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
++                   p.sex, p.birth_date, p.hcl, p.origin, p.height, p.weight, p.blood_pressure,
++                   p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
+                    o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
+                    ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id
+             FROM orders o
+             JOIN patients p ON o.patient_id = p.id
+             JOIN order_tests ot ON ot.order_id = o.id
+             JOIN tests t ON ot.test_id = t.id
+             WHERE {where_clause}
+             ORDER BY datetime(o.date) DESC, o.id DESC, t.name ASC
+         """
+         self.cur.execute(query, params)
+         return self.cur.fetchall()
+ 
+     def get_patient_history_by_document(self, doc_number, doc_type=None):
+         return self.get_patient_history(doc_number=doc_number, doc_type=doc_type)
+ 
+     def _ensure_test_renamed(self, old_name, new_name):
+         if old_name == new_name:
+             return
+         self.cur.execute("UPDATE tests SET name=? WHERE name=?", (new_name, old_name))
+         self.conn.commit()
+ 
+     def _ensure_test_exists(self, name, category):
+         self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
+         row = self.cur.fetchone()
+         if row:
+ 
+EOF
+)
