@@ -15,6 +15,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QVBoxLay
 from PyQt5.QtCore import QDate, QDateTime, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont
 from fpdf import FPDF  # Asegúrese de tener fpdf instalado (pip install fpdf)
+from openpyxl import Workbook
 
 LAB_TITLE = "Laboratorio P.S. Iñapari - 002789"
 
@@ -4879,6 +4880,7 @@ class MainWindow(QMainWindow):
         self.view_activity_btn = QPushButton("Mostrar registro")
         self.export_activity_pdf_btn = QPushButton("Exportar PDF")
         self.export_activity_csv_btn = QPushButton("Exportar CSV")
+        self.export_activity_excel_btn = QPushButton("Exportar Excel")
         self.export_activity_delivery_btn = QPushButton("Hoja de entrega")
         self.delete_activity_btn = QPushButton("Eliminar selección")
         self.delete_activity_btn.setStyleSheet(
@@ -4888,6 +4890,7 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.view_activity_btn)
         controls_layout.addWidget(self.export_activity_pdf_btn)
         controls_layout.addWidget(self.export_activity_csv_btn)
+        controls_layout.addWidget(self.export_activity_excel_btn)
         controls_layout.addWidget(self.export_activity_delivery_btn)
         controls_layout.addWidget(self.delete_activity_btn)
         controls_layout.addStretch()
@@ -4899,6 +4902,27 @@ class MainWindow(QMainWindow):
         self.activity_search_input.setPlaceholderText("Filtrar por prueba, paciente o estado de muestra")
         self.activity_search_input.setClearButtonEnabled(True)
         activity_filter_layout.addWidget(self.activity_search_input)
+        activity_filter_layout.addSpacing(12)
+        activity_filter_layout.addWidget(QLabel("Edad:"))
+        self.activity_min_age_spin = QSpinBox()
+        self.activity_min_age_spin.setRange(-1, 120)
+        self.activity_min_age_spin.setSpecialValueText("Mín.")
+        self.activity_min_age_spin.setValue(-1)
+        self.activity_max_age_spin = QSpinBox()
+        self.activity_max_age_spin.setRange(-1, 120)
+        self.activity_max_age_spin.setSpecialValueText("Máx.")
+        self.activity_max_age_spin.setValue(-1)
+        activity_filter_layout.addWidget(self.activity_min_age_spin)
+        activity_filter_layout.addWidget(QLabel("a"))
+        activity_filter_layout.addWidget(self.activity_max_age_spin)
+        activity_filter_layout.addSpacing(12)
+        activity_filter_layout.addWidget(QLabel("Tipo de prueba:"))
+        self.activity_test_filter = QComboBox()
+        self.activity_test_filter.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.activity_test_filter.addItem("Todas las pruebas", "")
+        for test_name in sorted(self.labdb.test_map.keys()):
+            self.activity_test_filter.addItem(test_name, test_name)
+        activity_filter_layout.addWidget(self.activity_test_filter)
         activity_filter_layout.addStretch()
         activity_layout.addLayout(activity_filter_layout)
 
@@ -5005,8 +5029,12 @@ class MainWindow(QMainWindow):
         self.view_activity_btn.clicked.connect(self.load_activity_summary)
         self.export_activity_pdf_btn.clicked.connect(lambda: self.export_activity_record("pdf"))
         self.export_activity_csv_btn.clicked.connect(lambda: self.export_activity_record("csv"))
+        self.export_activity_excel_btn.clicked.connect(lambda: self.export_activity_record("xlsx"))
         self.export_activity_delivery_btn.clicked.connect(self.export_activity_delivery_sheet)
         self.delete_activity_btn.clicked.connect(self.delete_selected_activity_entries)
+        self.activity_min_age_spin.valueChanged.connect(self.apply_activity_filter)
+        self.activity_max_age_spin.valueChanged.connect(self.apply_activity_filter)
+        self.activity_test_filter.currentIndexChanged.connect(self.apply_activity_filter)
         self._update_range_controls()
         self._stats_controls_ready = True
         self._update_stats_period_controls()
@@ -5198,20 +5226,45 @@ class MainWindow(QMainWindow):
         data = cache.get("data", [])
         description = cache.get("description", "")
         query = self.activity_search_input.text().strip().lower() if hasattr(self, 'activity_search_input') else ""
-        if not query:
-            filtered = data
-        else:
-            def matches(item):
-                haystacks = [
-                    item.get("patient", ""),
-                    item.get("document", ""),
-                    item.get("test", ""),
-                    self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue")) or "",
-                    item.get("result", ""),
-                ]
-                haystacks = [h for h in haystacks if h not in (None, "")]
-                return any(query in str(value).lower() for value in haystacks)
-            filtered = [item for item in data if matches(item)]
+        min_age = None
+        max_age = None
+        if hasattr(self, "activity_min_age_spin"):
+            min_val = self.activity_min_age_spin.value()
+            if min_val >= 0:
+                min_age = min_val
+        if hasattr(self, "activity_max_age_spin"):
+            max_val = self.activity_max_age_spin.value()
+            if max_val >= 0:
+                max_age = max_val
+        selected_test = None
+        if hasattr(self, "activity_test_filter"):
+            selected_test = self.activity_test_filter.currentData()
+            if isinstance(selected_test, str):
+                selected_test = selected_test.strip().lower() or None
+
+        def matches(item):
+            age_val = item.get("age_years")
+            if min_age is not None and (age_val is None or age_val < min_age):
+                return False
+            if max_age is not None and (age_val is None or age_val > max_age):
+                return False
+            if selected_test:
+                item_test = str(item.get("test", "")).strip().lower()
+                if item_test != selected_test:
+                    return False
+            if not query:
+                return True
+            haystacks = [
+                item.get("patient", ""),
+                item.get("document", ""),
+                item.get("test", ""),
+                self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue")) or "",
+                item.get("result", ""),
+            ]
+            haystacks = [h for h in haystacks if h not in (None, "")]
+            return any(query in str(value).lower() for value in haystacks)
+
+        filtered = [item for item in data if matches(item)]
         self._render_activity_rows(filtered, description, total_count=len(data))
 
 
@@ -5283,6 +5336,7 @@ class MainWindow(QMainWindow):
                 "gestational_age_weeks": gest_age_weeks,
                 "expected_delivery_date": expected_delivery,
                 "age": age_display,
+                "age_years": age_years,
                 "test": test_name,
                 "result": result_text,
                 "summary_items": summary_items,
@@ -5355,7 +5409,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Sin cambios", "No se eliminaron registros. Verifique el estado de las órdenes seleccionadas.")
 
     def export_activity_record(self, fmt):
-        if fmt not in {"pdf", "csv"}:
+        if fmt not in {"pdf", "csv", "xlsx"}:
             return
         if not getattr(self, '_activity_cache', None):
             self.load_activity_summary()
@@ -5365,6 +5419,46 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Sin datos", "No hay registros para el período seleccionado.")
             return
         description = cache.get("description", "")
+        if fmt == "xlsx":
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Exportar registro",
+                self._ensure_output_directory("registros", "registro.xlsx"),
+                "Archivo Excel (*.xlsx)"
+            )
+            if not file_path:
+                return
+            if not file_path.lower().endswith(".xlsx"):
+                file_path += ".xlsx"
+            try:
+                workbook = Workbook()
+                sheet = workbook.active
+                sheet.title = "Registro de pruebas"
+                headers = ["Fecha", "Orden", "Paciente", "Documento", "Edad", "Prueba", "Estado", "Resultado"]
+                sheet.append(headers)
+                for item in data:
+                    status_text = self._format_sample_status_text(item.get("sample_status"), item.get("sample_issue")) or "-"
+                    sheet.append([
+                        item.get("date", ""),
+                        item.get("order_id", ""),
+                        item.get("patient", ""),
+                        item.get("document", ""),
+                        item.get("age", ""),
+                        item.get("test", ""),
+                        status_text,
+                        item.get("result", "")
+                    ])
+                for column_cells in sheet.columns:
+                    max_len = max(len(str(cell.value)) if cell.value is not None else 0 for cell in column_cells)
+                    adjusted_width = min(max(max_len + 2, 10), 60)
+                    col_letter = column_cells[0].column_letter
+                    sheet.column_dimensions[col_letter].width = adjusted_width
+                workbook.save(file_path)
+            except Exception as exc:
+                QMessageBox.warning(self, "Error", f"No se pudo exportar el archivo Excel:\n{exc}")
+                return
+            QMessageBox.information(self, "Exportado", f"Registro guardado en:\n{file_path}")
+            return
         if fmt == "csv":
             file_path, _ = QFileDialog.getSaveFileName(
                 self,
