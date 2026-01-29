@@ -12,7 +12,8 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QVBoxLay
                              QStackedWidget, QTabWidget, QFormLayout, QScrollArea, QGroupBox, QComboBox,
                              QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox, QCheckBox,
                              QDateEdit, QRadioButton, QButtonGroup, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
-                             QSpinBox, QInputDialog, QAbstractItemView, QGridLayout)
+                             QSpinBox, QInputDialog, QAbstractItemView, QGridLayout, QToolButton, QFrame, QSizePolicy,
+                             QTreeWidget, QTreeWidgetItem, QStyle, QToolBox)
 from PyQt5.QtCore import QDate, QDateTime, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont
 from fpdf import FPDF  # Asegúrese de tener fpdf instalado (pip install fpdf)
@@ -3422,14 +3423,16 @@ class MainWindow(QMainWindow):
         aggregated = []
         grouped = OrderedDict()
         for record in records:
-            summary_items = record.get("summary_items")
-            if not summary_items:
+            summary_items = record.get("summary_items") or []
+            has_result = bool(record.get("has_result"))
+            sample_received = bool(record.get("sample_received"))
+            if not summary_items and not sample_received:
                 result_value = record.get("result", "")
                 if isinstance(result_value, str) and result_value.strip():
                     summary_items = [result_value.strip()]
                 elif not self._is_blank_result(result_value):
                     summary_items = [str(result_value)]
-            if not summary_items:
+            if not summary_items and not sample_received:
                 continue
             order_id = record.get("order_id")
             if order_id is None:
@@ -3465,19 +3468,41 @@ class MainWindow(QMainWindow):
                     "emitted_at": record.get("emitted_at"),
                     "groups": {key: [] for key in group_keys},
                     "tests": [],
-                    "sample_statuses": []
+                    "sample_statuses": [],
+                    "pending_tests": [],
+                    "test_detail_map": OrderedDict()
                 }
                 grouped[order_id] = entry
             group_key = self._map_category_group(record.get("category"))
-            for item in summary_items:
-                cleaned = str(item).strip()
-                if cleaned:
-                    entry["groups"].setdefault(group_key, []).append(cleaned)
+            if has_result:
+                for item in summary_items:
+                    cleaned = str(item).strip()
+                    if cleaned:
+                        entry["groups"].setdefault(group_key, []).append(cleaned)
             test_name = record.get("test")
             if test_name:
                 test_clean = str(test_name).strip()
                 if test_clean and test_clean not in entry.setdefault("tests", []):
                     entry["tests"].append(test_clean)
+                detail_map = entry.setdefault("test_detail_map", OrderedDict())
+                detail_entry = detail_map.get(test_clean, {
+                    "test": test_clean,
+                    "group": group_key,
+                    "summary_items": [],
+                    "has_result": False,
+                    "sample_received": False,
+                    "issue": None,
+                    "is_critical": False
+                })
+                if summary_items and has_result:
+                    detail_entry["summary_items"] = summary_items
+                detail_entry["has_result"] = detail_entry["has_result"] or has_result
+                detail_entry["sample_received"] = detail_entry["sample_received"] or sample_received
+                detail_entry["issue"] = record.get("sample_issue") or detail_entry.get("issue")
+                detail_entry["is_critical"] = detail_entry["is_critical"] or bool(record.get("is_critical"))
+                detail_map[test_clean] = detail_entry
+            if sample_received and not has_result and test_name:
+                entry.setdefault("pending_tests", []).append(test_name)
             status_info = {
                 "test": record.get("test"),
                 "status": record.get("sample_status"),
@@ -3491,7 +3516,9 @@ class MainWindow(QMainWindow):
                 obs_clean = " ".join(str(obs_text).split())
                 if obs_clean and obs_clean.lower() not in {"n/a", "na", "-"}:
                     entry["groups"].setdefault("others", []).append(f"Obs: {obs_clean}")
-            if any(entry["groups"].get(key) for key in group_keys):
+            if "test_detail_map" in entry:
+                entry["test_details"] = list(entry["test_detail_map"].values())
+            if any(entry["groups"].get(key) for key in group_keys) or entry.get("pending_tests"):
                 aggregated.append(entry)
         return aggregated
 
@@ -3633,6 +3660,19 @@ class MainWindow(QMainWindow):
         if note:
             return f"{base} - {note}"
         return base
+
+    def _is_sample_received_status(self, status_value):
+        value = (status_value or "recibida").strip().lower()
+        return value in {"recibida", "aceptada"}
+
+    def _detect_critical_result(self, raw_result, summary_items):
+        text_bits = []
+        if isinstance(raw_result, str):
+            text_bits.append(raw_result)
+        if isinstance(summary_items, list):
+            text_bits.extend(summary_items)
+        combined = " ".join(text_bits).lower()
+        return "crit" in combined or "crítico" in combined or "critico" in combined
 
     def _format_history_sample_status(self, entry):
         statuses = entry.get("sample_statuses") or []
@@ -4954,8 +4994,41 @@ class MainWindow(QMainWindow):
 
         history_tab = QWidget()
         history_tab_layout = QVBoxLayout(history_tab)
-        history_group = QGroupBox("Historial de pacientes")
-        history_layout = QVBoxLayout(history_group)
+        history_tab_layout.setContentsMargins(8, 8, 8, 8)
+        history_tab_layout.setSpacing(8)
+
+        history_toolbar_layout = QHBoxLayout()
+        history_toolbar_layout.addWidget(QLabel("Acciones rápidas:"))
+        self.history_open_btn = QToolButton()
+        self.history_open_btn.setToolTip("Ver en emisión")
+        self.history_open_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+        self.history_open_btn.setEnabled(False)
+        self.history_fua_btn = QToolButton()
+        self.history_fua_btn.setToolTip("Registrar FUA")
+        self.history_fua_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
+        self.history_fua_btn.setEnabled(False)
+        self.history_window_btn = QToolButton()
+        self.history_window_btn.setToolTip("Ventana de historial")
+        self.history_window_btn.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
+        self.history_window_btn.setEnabled(False)
+        for btn in (self.history_open_btn, self.history_fua_btn, self.history_window_btn):
+            btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+        history_toolbar_layout.addWidget(self.history_open_btn)
+        history_toolbar_layout.addWidget(self.history_fua_btn)
+        history_toolbar_layout.addWidget(self.history_window_btn)
+        history_toolbar_layout.addStretch()
+        history_tab_layout.addLayout(history_toolbar_layout)
+
+        self.history_tab = history_tab
+        history_workspace = QWidget()
+        self.history_workspace = history_workspace
+        self.history_workspace_layout = QGridLayout(history_workspace)
+        self.history_workspace_layout.setContentsMargins(0, 0, 0, 0)
+        self.history_workspace_layout.setSpacing(8)
+
+        self.history_orders_panel = QGroupBox("Historial de órdenes")
+        orders_layout = QVBoxLayout(self.history_orders_panel)
+        orders_layout.setSpacing(6)
         history_search_layout = QHBoxLayout()
         history_search_layout.addWidget(QLabel("DNI:"))
         self.history_doc_input = QLineEdit()
@@ -4965,19 +5038,12 @@ class MainWindow(QMainWindow):
         self.history_lastname_input = QLineEdit()
         self.history_lastname_input.setPlaceholderText("Ej. PEREZ / PEREZ GARCIA")
         history_search_layout.addWidget(self.history_lastname_input)
-        self.history_search_btn = QPushButton("Buscar")
+        self.history_search_btn = QToolButton()
+        self.history_search_btn.setToolTip("Buscar")
+        self.history_search_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogContentsView))
         history_search_layout.addWidget(self.history_search_btn)
-        self.history_open_btn = QPushButton("Ver en emisión")
-        self.history_open_btn.setEnabled(False)
-        history_search_layout.addWidget(self.history_open_btn)
-        self.history_fua_btn = QPushButton("Registrar FUA")
-        self.history_fua_btn.setEnabled(False)
-        history_search_layout.addWidget(self.history_fua_btn)
-        self.history_window_btn = QPushButton("Ventana de historial")
-        self.history_window_btn.setEnabled(False)
-        history_search_layout.addWidget(self.history_window_btn)
         history_search_layout.addStretch()
-        history_layout.addLayout(history_search_layout)
+        orders_layout.addLayout(history_search_layout)
         history_headers = [
             "F. muestra / Registro",
             "Orden",
@@ -5007,23 +5073,90 @@ class MainWindow(QMainWindow):
         self.history_table.setWordWrap(True)
         self.history_table.verticalHeader().setVisible(False)
         self.history_table.horizontalHeader().setStretchLastSection(True)
+        self.history_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.history_headers = history_headers
         self.history_column_map = {header: idx for idx, header in enumerate(history_headers)}
-        history_layout.addWidget(self.history_table)
+        orders_layout.addWidget(self.history_table)
 
-        self.history_preview_group = QGroupBox("Vista previa detallada de la orden")
-        preview_layout = QVBoxLayout(self.history_preview_group)
-        self.history_preview_hint = QLabel("Seleccione una fila para ver los exámenes y datos completos de la orden.")
-        self.history_preview_hint.setStyleSheet("color: #555;")
-        preview_layout.addWidget(self.history_preview_hint)
-        self.history_preview_text = QTextEdit()
-        self.history_preview_text.setReadOnly(True)
-        self.history_preview_text.setMinimumHeight(260)
-        self.history_preview_text.setStyleSheet("QTextEdit { padding: 12px; }")
-        self.history_preview_text.setPlaceholderText("Sin selección. Busque y seleccione una orden para ver el detalle aquí.")
-        preview_layout.addWidget(self.history_preview_text)
-        history_layout.addWidget(self.history_preview_group)
-        history_tab_layout.addWidget(history_group)
+        self.history_patient_panel = QGroupBox("Resumen del paciente")
+        patient_layout = QVBoxLayout(self.history_patient_panel)
+        self.history_patient_summary_label = QLabel()
+        self.history_patient_summary_label.setWordWrap(True)
+        self.history_patient_summary_label.setTextFormat(Qt.RichText)
+        self.history_patient_summary_label.setStyleSheet("QLabel { padding: 6px; }")
+        patient_scroll = QScrollArea()
+        patient_scroll.setWidgetResizable(True)
+        patient_scroll.setFrameShape(QFrame.NoFrame)
+        patient_container = QWidget()
+        patient_container_layout = QVBoxLayout(patient_container)
+        patient_container_layout.setContentsMargins(0, 0, 0, 0)
+        patient_container_layout.addWidget(self.history_patient_summary_label)
+        patient_scroll.setWidget(patient_container)
+        patient_layout.addWidget(patient_scroll)
+
+        self.history_alerts_panel = QGroupBox("Alertas clínicas")
+        alerts_layout = QVBoxLayout(self.history_alerts_panel)
+        self.history_alerts_placeholder = QLabel("Sin alertas registradas.")
+        self.history_alerts_placeholder.setStyleSheet("color: #666; padding: 6px;")
+        self.history_alerts_container = QWidget()
+        self.history_alerts_grid = QGridLayout(self.history_alerts_container)
+        self.history_alerts_grid.setContentsMargins(6, 6, 6, 6)
+        self.history_alerts_grid.setHorizontalSpacing(6)
+        self.history_alerts_grid.setVerticalSpacing(6)
+        alerts_scroll = QScrollArea()
+        alerts_scroll.setWidgetResizable(True)
+        alerts_scroll.setFrameShape(QFrame.NoFrame)
+        alerts_scroll.setWidget(self.history_alerts_container)
+        alerts_layout.addWidget(self.history_alerts_placeholder)
+        alerts_layout.addWidget(alerts_scroll)
+
+        self.history_detail_panel = QGroupBox("Detalle de la orden / Exámenes")
+        detail_layout = QVBoxLayout(self.history_detail_panel)
+        detail_toolbar = QHBoxLayout()
+        detail_toolbar.addWidget(QLabel("Filtros:"))
+        self.history_detail_filter_group = QButtonGroup(self)
+        self.history_detail_filter_group.setExclusive(True)
+        self.history_filter_done_btn = QToolButton()
+        self.history_filter_done_btn.setText("Todos realizados")
+        self.history_filter_done_btn.setCheckable(True)
+        self.history_filter_done_btn.setChecked(True)
+        self.history_filter_pending_btn = QToolButton()
+        self.history_filter_pending_btn.setText("Pendientes con muestra")
+        self.history_filter_pending_btn.setCheckable(True)
+        self.history_filter_critical_btn = QToolButton()
+        self.history_filter_critical_btn.setText("Críticos")
+        self.history_filter_critical_btn.setCheckable(True)
+        for btn in (self.history_filter_done_btn, self.history_filter_pending_btn, self.history_filter_critical_btn):
+            btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            self.history_detail_filter_group.addButton(btn)
+            detail_toolbar.addWidget(btn)
+        detail_toolbar.addStretch()
+        detail_layout.addLayout(detail_toolbar)
+        self.history_detail_empty = QLabel("Sin exámenes realizados/recibidos en esta orden.")
+        self.history_detail_empty.setAlignment(Qt.AlignCenter)
+        self.history_detail_empty.setStyleSheet("color: #666; padding: 12px;")
+        self.history_detail_tree = QTreeWidget()
+        self.history_detail_tree.setHeaderLabels(["Examen", "Estado/Resultado"])
+        self.history_detail_tree.setRootIsDecorated(True)
+        self.history_detail_tree.setAlternatingRowColors(True)
+        self.history_detail_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        detail_layout.addWidget(self.history_detail_empty)
+        detail_layout.addWidget(self.history_detail_tree)
+
+        self.history_combined_panel = QFrame()
+        self.history_combined_panel.setFrameShape(QFrame.NoFrame)
+        combined_layout = QVBoxLayout(self.history_combined_panel)
+        combined_layout.setContentsMargins(0, 0, 0, 0)
+        combined_layout.setSpacing(8)
+        combined_layout.addWidget(self.history_alerts_panel)
+        combined_layout.addWidget(self.history_detail_panel)
+        self.history_combined_layout = combined_layout
+
+        self.history_mobile_toolbox = QToolBox()
+
+        history_tab_layout.addWidget(history_workspace)
+        history_tab_layout.addWidget(self.history_mobile_toolbox)
+        self.history_mobile_toolbox.hide()
         self.analysis_tabs.addTab(history_tab, "Historial de pacientes")
         self._stats_controls_ready = False
         self.stats_mode_combo.currentIndexChanged.connect(self._update_stats_period_controls)
@@ -5052,6 +5185,13 @@ class MainWindow(QMainWindow):
         self.history_table.itemSelectionChanged.connect(self._on_history_selection_changed)
         self.history_fua_btn.clicked.connect(self.edit_history_fua)
         self.history_window_btn.clicked.connect(self.open_history_window)
+        self.history_detail_filter_group.buttonClicked.connect(self._update_history_detail_from_selection)
+        if hasattr(self, 'history_tab'):
+            def _history_tab_resize(event):
+                QWidget.resizeEvent(self.history_tab, event)
+                self._update_history_workspace_layout()
+            self.history_tab.resizeEvent = _history_tab_resize
+        self._update_history_workspace_layout()
     def refresh_statistics(self):
         if not getattr(self, '_stats_controls_ready', False):
             return
@@ -5855,22 +5995,92 @@ class MainWindow(QMainWindow):
             self.history_window_btn.setEnabled(False)
         self._render_history_preview(None)
 
+    def _clear_layout(self, layout):
+        if not layout:
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.setParent(None)
+
+    def _update_history_workspace_layout(self):
+        if not hasattr(self, 'history_tab') or not hasattr(self, 'history_workspace_layout'):
+            return
+        width = self.history_tab.width()
+        if width < 980:
+            self.history_workspace.hide()
+            self.history_mobile_toolbox.show()
+            self._clear_layout(self.history_workspace_layout)
+            while self.history_mobile_toolbox.count() > 0:
+                widget = self.history_mobile_toolbox.widget(0)
+                self.history_mobile_toolbox.removeItem(0)
+                if widget:
+                    widget.setParent(None)
+            self.history_mobile_toolbox.addItem(self.history_orders_panel, "Historial")
+            self.history_mobile_toolbox.addItem(self.history_patient_panel, "Paciente")
+            self.history_mobile_toolbox.addItem(self.history_alerts_panel, "Alertas")
+            self.history_mobile_toolbox.addItem(self.history_detail_panel, "Detalle de orden")
+            return
+        self.history_mobile_toolbox.hide()
+        self.history_workspace.show()
+        while self.history_mobile_toolbox.count() > 0:
+            widget = self.history_mobile_toolbox.widget(0)
+            self.history_mobile_toolbox.removeItem(0)
+            if widget:
+                widget.setParent(None)
+        self._clear_layout(self.history_workspace_layout)
+        column_count = 4 if width >= 1400 else 3
+        if column_count == 4:
+            self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
+            self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
+            self.history_workspace_layout.addWidget(self.history_alerts_panel, 0, 2)
+            self.history_workspace_layout.addWidget(self.history_detail_panel, 0, 3)
+            self.history_workspace_layout.setColumnStretch(0, 4)
+            self.history_workspace_layout.setColumnStretch(1, 3)
+            self.history_workspace_layout.setColumnStretch(2, 3)
+            self.history_workspace_layout.setColumnStretch(3, 4)
+        else:
+            self._clear_layout(self.history_combined_layout)
+            self.history_combined_layout.addWidget(self.history_alerts_panel)
+            self.history_combined_layout.addWidget(self.history_detail_panel)
+            self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
+            self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
+            self.history_workspace_layout.addWidget(self.history_combined_panel, 0, 2)
+            self.history_workspace_layout.setColumnStretch(0, 4)
+            self.history_workspace_layout.setColumnStretch(1, 3)
+            self.history_workspace_layout.setColumnStretch(2, 4)
+        self.history_workspace_layout.setRowStretch(0, 1)
+
+    def _get_selected_history_entry(self):
+        if not hasattr(self, 'history_table'):
+            return None
+        selection = self.history_table.selectionModel()
+        if not selection or not selection.selectedRows():
+            return None
+        row = selection.selectedRows()[0].row()
+        history_items = getattr(self, '_history_results', [])
+        return history_items[row] if 0 <= row < len(history_items) else None
+
     def _render_history_preview(self, entry):
-        if not hasattr(self, 'history_preview_text'):
+        if not hasattr(self, 'history_patient_summary_label'):
             return
         if not entry:
-            self.history_preview_text.setHtml(
-                "<p style='color:#666;'>Seleccione una orden para ver aquí un resumen completo de exámenes y datos del paciente.</p>"
+            self.history_patient_summary_label.setText(
+                "<p style='color:#666;'>Seleccione una orden para ver los datos del paciente.</p>"
             )
+            self._render_history_alerts([])
+            self._render_history_detail([])
             return
+        self._render_history_patient_summary(entry)
+        self._render_history_alerts(self._extract_history_alert_tags(entry))
+        self._render_history_detail(entry)
+
+    def _render_history_patient_summary(self, entry):
         def esc(value, fallback="—"):
             if value in (None, ""):
                 return fallback
             return html.escape(str(value))
-
-        def format_measure(value, unit):
-            formatted = self._format_number(value)
-            return f"{esc(formatted)} {unit}" if formatted else "—"
 
         def to_title(text):
             return text.title() if text else ""
@@ -5886,128 +6096,189 @@ class MainWindow(QMainWindow):
         else:
             patient_name = to_title(" ".join(str(entry.get("patient") or "").split())) or "—"
 
-        header_date = self._format_date_for_registry(entry)
-        emitted_text = self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
-        insurance_text = self._format_insurance_display(entry.get("insurance_type"))
-        fua_text = self._format_fua_display(entry)
         doc_type_value = entry.get("doc_type")
         doc_label = doc_type_value.upper() if doc_type_value else "Doc."
         doc_number = entry.get("doc_number") or "—"
-        birth_display = self._format_short_date(entry.get("birth_date"))
-        hcl_display = entry.get("hcl") or "—"
-        sex_display = self._format_sex_display(entry.get("sex"))
         age_display = entry.get("age") or "—"
+        sex_display = self._format_sex_display(entry.get("sex"))
         origin_display = entry.get("origin") or "—"
+        hcl_display = entry.get("hcl") or "—"
+        insurance_text = self._format_insurance_display(entry.get("insurance_type"))
+        fua_text = self._format_fua_display(entry)
+        birth_display = self._format_short_date(entry.get("birth_date"))
+        header_date = self._format_date_for_registry(entry)
+        emitted_text = self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
         pregnancy_line = self._format_registry_pregnancy_line(entry)
-        is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
         pregnancy_display = pregnancy_line.replace("Gestante:", "Gestación:") if pregnancy_line else "Gestación: No"
-        pregnancy_short = "Sí" if is_pregnant else "No"
-        pregnancy_detail = pregnancy_display.replace("Gestación:", "").strip() or pregnancy_short
-        height_display = format_measure(entry.get("height"), "cm")
-        weight_display = format_measure(entry.get("weight"), "kg")
-        bp_display = esc(entry.get("blood_pressure")) if entry.get("blood_pressure") else "—"
-
-        def list_items(values):
-            cleaned = [esc(item) for item in values if str(item).strip()]
-            if not cleaned:
-                return "<p class='muted'>—</p>"
-            return "<ul>" + "".join(f"<li>{item}</li>" for item in cleaned) + "</ul>"
-
-        sample_status_text = self._format_history_sample_status(entry)
-        sample_lines = [line for line in (sample_status_text or "").split("\n") if line.strip()]
-        observations = entry.get("observations")
-        obs_clean = " ".join(str(observations).split()) if observations else ""
-
-        groups = entry.get("groups", {}) if isinstance(entry.get("groups", {}), dict) else {}
-        tests = sorted(set(entry.get("tests", []) or []))
-
-        left_panel = f"""
-        <div class="section-title">Datos del paciente</div>
-        <table class="grid">
-          <tr>
-            <td><span class="label">Paciente:</span> {esc(patient_name)}</td>
-            <td><span class="label">Documento:</span> {esc(doc_label)} {esc(doc_number)}</td>
-          </tr>
-          <tr>
-            <td><span class="label">F. Nacimiento:</span> {esc(birth_display)}</td>
-            <td><span class="label">Edad:</span> {esc(age_display)}</td>
-          </tr>
-          <tr>
-            <td><span class="label">Sexo:</span> {esc(sex_display)}</td>
-            <td><span class="label">Procedencia:</span> {esc(origin_display)}</td>
-          </tr>
-          <tr>
-            <td><span class="label">HCL:</span> {esc(hcl_display)}</td>
-            <td><span class="label">Gestación:</span> {esc(pregnancy_short)}</td>
-          </tr>
-        </table>
-
-        <div class="section-title">Signos y medidas</div>
-        <table class="grid">
-          <tr>
-            <td><span class="label">Talla:</span> {height_display}</td>
-            <td><span class="label">Peso:</span> {weight_display}</td>
-          </tr>
-          <tr>
-            <td><span class="label">Presión arterial:</span> {bp_display}</td>
-            <td><span class="label">Gestación:</span> {esc(pregnancy_detail)}</td>
-          </tr>
-        </table>
-
-        <div class="section-title">Estado de muestras</div>
-        {list_items(sample_lines)}
-        """
-        if obs_clean:
-            left_panel += f"""
-            <div class="section-title">Observaciones de la orden</div>
-            <p>{esc(obs_clean)}</p>
-            """
-
-        right_panel = f"""
-        <div class="section-title">Exámenes en la orden</div>
-        {list_items(tests)}
-        """
-        category_labels = [
-            ("Hematología", "hematology"),
-            ("Bioquímica", "biochemistry"),
-            ("Micro/Parasitología", "micro_parasito"),
-            ("Otros exámenes", "others"),
-        ]
-        for label, key in category_labels:
-            items = groups.get(key, []) if isinstance(groups, dict) else []
-            right_panel += f"""
-            <div class="section-title">{esc(label)}</div>
-            {list_items(items)}
-            """
 
         html_output = f"""
-        <html>
-        <head>
-        <style>
-        body {{ font-family: "Segoe UI", sans-serif; font-size: 11pt; color: #1d1d1d; }}
-        .meta {{ color: #555; font-size: 10.5pt; margin-bottom: 6px; }}
-        .section-title {{ font-weight: 700; font-size: 12pt; margin: 12px 0 6px; }}
-        .grid {{ width: 100%; border-collapse: collapse; margin-bottom: 6px; }}
-        .grid td {{ padding: 4px 8px; vertical-align: top; }}
-        .label {{ color: #666; font-weight: 600; }}
-        .muted {{ color: #777; margin: 0; }}
-        ul {{ margin: 4px 0 8px 18px; }}
-        .layout {{ width: 100%; border-collapse: collapse; }}
-        .layout td {{ vertical-align: top; }}
-        </style>
-        </head>
-        <body>
-        <div class="section-title">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
-        <div class="meta">Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong></div>
-        <table class="layout">
-          <tr>
-            <td style="width:50%; padding-right: 14px;">{left_panel}</td>
-            <td style="width:50%; padding-left: 14px;">{right_panel}</td>
-          </tr>
+        <div style="font-weight:700; font-size:12pt;">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
+        <div style="color:#555; font-size:10pt; margin-bottom:6px;">
+            Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:10.5pt;">
+            <tr><td style="padding:3px 6px;"><strong>Paciente</strong></td><td style="padding:3px 6px;">{esc(patient_name)}</td></tr>
+            <tr><td style="padding:3px 6px;"><strong>{esc(doc_label)}</strong></td><td style="padding:3px 6px;">{esc(doc_number)}</td></tr>
+            <tr><td style="padding:3px 6px;"><strong>F. Nac.</strong></td><td style="padding:3px 6px;">{esc(birth_display)}</td></tr>
+            <tr><td style="padding:3px 6px;"><strong>Edad</strong></td><td style="padding:3px 6px;">{esc(age_display)}</td></tr>
+            <tr><td style="padding:3px 6px;"><strong>Sexo</strong></td><td style="padding:3px 6px;">{esc(sex_display)}</td></tr>
+            <tr><td style="padding:3px 6px;"><strong>Procedencia</strong></td><td style="padding:3px 6px;">{esc(origin_display)}</td></tr>
+            <tr><td style="padding:3px 6px;"><strong>HCL</strong></td><td style="padding:3px 6px;">{esc(hcl_display)}</td></tr>
+            <tr><td style="padding:3px 6px;"><strong>Gestación</strong></td><td style="padding:3px 6px;">{esc(pregnancy_display.replace("Gestación:", "").strip())}</td></tr>
         </table>
-        </body></html>
         """
-        self.history_preview_text.setHtml(html_output)
+        self.history_patient_summary_label.setText(html_output)
+
+    def _extract_history_alert_tags(self, entry):
+        tags = []
+        is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
+        if is_pregnant:
+            tags.append("Gestación")
+        text_bits = []
+        observations = entry.get("observations")
+        if observations:
+            text_bits.append(str(observations))
+        for status in entry.get("sample_statuses", []) or []:
+            issue = status.get("issue")
+            if issue:
+                text_bits.append(str(issue))
+        combined = " ".join(text_bits).lower()
+        if "alerg" in combined:
+            tags.append("Alergias")
+        if re.search(r'\b(vih|hiv)\b', combined):
+            tags.append("VIH reactivo previo")
+        if re.search(r'\b(tb|tbc|tuberc)', combined):
+            tags.append("TB previa")
+        if re.search(r'\b(dm|diabet)', combined):
+            tags.append("DM")
+        if "hta" in combined or "hipert" in combined:
+            tags.append("HTA")
+        if "anticoag" in combined:
+            tags.append("Anticoagulantes")
+        if "crit" in combined:
+            tags.append("Resultado crítico previo")
+        if "repetir" in combined:
+            tags.append("Repetir muestra")
+        deduped = []
+        for tag in tags:
+            if tag not in deduped:
+                deduped.append(tag)
+        return deduped
+
+    def _render_history_alerts(self, tags):
+        if not hasattr(self, 'history_alerts_grid'):
+            return
+        while self.history_alerts_grid.count():
+            item = self.history_alerts_grid.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+        if not tags:
+            self.history_alerts_placeholder.show()
+            return
+        self.history_alerts_placeholder.hide()
+        color_map = {
+            "Alergias": ("#ffe7cc", "#8a4b08"),
+            "VIH reactivo previo": ("#ffd6d6", "#a12626"),
+            "TB previa": ("#ffd6d6", "#a12626"),
+            "Resultado crítico previo": ("#ffd6d6", "#a12626"),
+            "Anticoagulantes": ("#fff1cc", "#7a4d00"),
+            "HTA": ("#fff1cc", "#7a4d00"),
+            "DM": ("#fff1cc", "#7a4d00"),
+            "Gestación": ("#e8e1ff", "#4b2e83"),
+            "Repetir muestra": ("#ffe7cc", "#8a4b08"),
+        }
+        for idx, tag in enumerate(tags):
+            bg, fg = color_map.get(tag, ("#e7f3ff", "#1f4e79"))
+            chip = QLabel(tag)
+            chip.setStyleSheet(
+                f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 4px 8px; }}"
+            )
+            chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+            row = idx // 2
+            col = idx % 2
+            self.history_alerts_grid.addWidget(chip, row, col, Qt.AlignLeft)
+
+    def _render_history_detail(self, entry):
+        if not hasattr(self, 'history_detail_tree'):
+            return
+        self.history_detail_tree.clear()
+        filter_mode = "done"
+        if hasattr(self, 'history_filter_pending_btn') and self.history_filter_pending_btn.isChecked():
+            filter_mode = "pending"
+        elif hasattr(self, 'history_filter_critical_btn') and self.history_filter_critical_btn.isChecked():
+            filter_mode = "critical"
+        detail_items = []
+        if isinstance(entry, dict):
+            detail_items = entry.get("test_details", [])
+        if not detail_items:
+            self.history_detail_tree.hide()
+            self.history_detail_empty.show()
+            return
+        grouped = OrderedDict()
+        group_labels = OrderedDict([
+            ("hematology", "Hematología"),
+            ("biochemistry", "Bioquímica"),
+            ("micro_parasito", "Micro/Parasitología"),
+            ("others", "Otros exámenes"),
+        ])
+        for item in detail_items:
+            if filter_mode == "done" and not item.get("has_result"):
+                continue
+            if filter_mode == "pending" and (item.get("has_result") or not item.get("sample_received")):
+                continue
+            if filter_mode == "critical" and not item.get("is_critical"):
+                continue
+            group_key = item.get("group") or "others"
+            grouped.setdefault(group_key, []).append(item)
+        any_rows = False
+        for group_key, group_label in group_labels.items():
+            items = grouped.get(group_key, [])
+            if not items:
+                continue
+            any_rows = True
+            group_item = QTreeWidgetItem([group_label, ""])
+            group_font = group_item.font(0)
+            group_font.setBold(True)
+            group_item.setFont(0, group_font)
+            self.history_detail_tree.addTopLevelItem(group_item)
+            for detail in items:
+                status_parts = []
+                if detail.get("has_result"):
+                    summary_items = detail.get("summary_items") or []
+                    if summary_items:
+                        status_parts.append("; ".join(summary_items))
+                    else:
+                        status_parts.append("Resultado registrado")
+                elif detail.get("sample_received"):
+                    status_parts.append("Recibida (pendiente resultado)")
+                issue = detail.get("issue")
+                if issue and not detail.get("has_result"):
+                    status_parts.append(str(issue))
+                status_text = " · ".join(status_parts) if status_parts else "—"
+                test_item = QTreeWidgetItem([detail.get("test") or "—", status_text])
+                group_item.addChild(test_item)
+            group_item.setExpanded(True)
+        if not any_rows:
+            if filter_mode == "critical":
+                self.history_detail_empty.setText("Sin resultados críticos en esta orden.")
+            elif filter_mode == "pending":
+                self.history_detail_empty.setText("No hay exámenes con muestra recibida pendiente.")
+            else:
+                self.history_detail_empty.setText("Sin exámenes realizados/recibidos en esta orden.")
+            self.history_detail_tree.hide()
+            self.history_detail_empty.show()
+        else:
+            self.history_detail_tree.show()
+            self.history_detail_empty.hide()
+
+    def _update_history_detail_from_selection(self):
+        entry = self._get_selected_history_entry()
+        if not entry:
+            self._render_history_detail([])
+            return
+        self._render_history_detail(entry)
+
 
     def _on_history_selection_changed(self):
         if not hasattr(self, 'history_table'):
@@ -6107,8 +6378,12 @@ class MainWindow(QMainWindow):
                 "order": {"age_years": age_years}
             }
             summary_items = self._build_registry_summary(test_name, raw_result, context=context)
-            if not summary_items:
+            sample_received = self._is_sample_received_status(sample_status)
+            has_result = bool(summary_items)
+            if not summary_items and not sample_received:
                 continue
+            if not summary_items and sample_received:
+                summary_items = [f"{test_name}: Recibida (pendiente resultado)"]
             result_text = "; ".join(summary_items)
             records.append({
                 "entry_id": entry_id,
@@ -6134,6 +6409,9 @@ class MainWindow(QMainWindow):
                 "test": test_name,
                 "result": result_text,
                 "summary_items": summary_items,
+                "has_result": has_result,
+                "sample_received": sample_received,
+                "is_critical": self._detect_critical_result(raw_result, summary_items),
                 "category": category,
                 "order_observations": order_obs,
                 "insurance_type": insurance_type,
@@ -6151,7 +6429,11 @@ class MainWindow(QMainWindow):
         self._history_results = aggregated
         self._populate_history_table_widget(self.history_table, aggregated)
         if not aggregated:
-            QMessageBox.information(self, "Sin resultados", "No se encontró historial con resultados registrados para los filtros ingresados.")
+            QMessageBox.information(
+                self,
+                "Sin resultados",
+                "No se encontró historial con exámenes realizados o muestras recibidas para los filtros ingresados."
+            )
             self._render_history_preview(None)
         else:
             self.history_table.selectRow(0)
