@@ -3462,6 +3462,7 @@ class MainWindow(QMainWindow):
                     "first_name": record.get("first_name"),
                     "last_name": record.get("last_name"),
                     "observations": record.get("order_observations"),
+                    "requested_by": record.get("requested_by"),
                     "insurance_type": record.get("insurance_type"),
                     "fua_number": record.get("fua_number"),
                     "emitted": record.get("emitted"),
@@ -5028,7 +5029,7 @@ class MainWindow(QMainWindow):
 
         self.history_orders_panel = QGroupBox("Historial de órdenes")
         orders_layout = QVBoxLayout(self.history_orders_panel)
-        orders_layout.setSpacing(6)
+        orders_layout.setSpacing(4)
         history_search_layout = QHBoxLayout()
         history_search_layout.addWidget(QLabel("DNI:"))
         self.history_doc_input = QLineEdit()
@@ -5078,12 +5079,12 @@ class MainWindow(QMainWindow):
         self.history_column_map = {header: idx for idx, header in enumerate(history_headers)}
         orders_layout.addWidget(self.history_table)
 
-        self.history_patient_panel = QGroupBox("Resumen del paciente")
+        self.history_patient_panel = QGroupBox("Resumen clínico del paciente")
         patient_layout = QVBoxLayout(self.history_patient_panel)
         self.history_patient_summary_label = QLabel()
         self.history_patient_summary_label.setWordWrap(True)
         self.history_patient_summary_label.setTextFormat(Qt.RichText)
-        self.history_patient_summary_label.setStyleSheet("QLabel { padding: 6px; }")
+        self.history_patient_summary_label.setStyleSheet("QLabel { padding: 4px; }")
         patient_scroll = QScrollArea()
         patient_scroll.setWidgetResizable(True)
         patient_scroll.setFrameShape(QFrame.NoFrame)
@@ -5096,6 +5097,8 @@ class MainWindow(QMainWindow):
 
         self.history_alerts_panel = QGroupBox("Alertas clínicas")
         alerts_layout = QVBoxLayout(self.history_alerts_panel)
+        alerts_layout.setContentsMargins(6, 6, 6, 6)
+        alerts_layout.setSpacing(4)
         self.history_alerts_placeholder = QLabel("Sin alertas registradas.")
         self.history_alerts_placeholder.setStyleSheet("color: #666; padding: 6px;")
         self.history_alerts_container = QWidget()
@@ -5109,6 +5112,7 @@ class MainWindow(QMainWindow):
         alerts_scroll.setWidget(self.history_alerts_container)
         alerts_layout.addWidget(self.history_alerts_placeholder)
         alerts_layout.addWidget(alerts_scroll)
+        self.history_has_alerts = False
 
         self.history_detail_panel = QGroupBox("Detalle de la orden / Exámenes")
         detail_layout = QVBoxLayout(self.history_detail_panel)
@@ -6008,6 +6012,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'history_tab') or not hasattr(self, 'history_workspace_layout'):
             return
         width = self.history_tab.width()
+        has_alerts = bool(getattr(self, 'history_has_alerts', False))
         if width < 980:
             self.history_workspace.hide()
             self.history_mobile_toolbox.show()
@@ -6019,7 +6024,8 @@ class MainWindow(QMainWindow):
                     widget.setParent(None)
             self.history_mobile_toolbox.addItem(self.history_orders_panel, "Historial")
             self.history_mobile_toolbox.addItem(self.history_patient_panel, "Paciente")
-            self.history_mobile_toolbox.addItem(self.history_alerts_panel, "Alertas")
+            if has_alerts:
+                self.history_mobile_toolbox.addItem(self.history_alerts_panel, "Alertas")
             self.history_mobile_toolbox.addItem(self.history_detail_panel, "Detalle de orden")
             return
         self.history_mobile_toolbox.hide()
@@ -6030,26 +6036,28 @@ class MainWindow(QMainWindow):
             if widget:
                 widget.setParent(None)
         self._clear_layout(self.history_workspace_layout)
-        column_count = 4 if width >= 1400 else 3
+        show_alerts_column = width >= 1400 and has_alerts
+        column_count = 4 if show_alerts_column else 3
         if column_count == 4:
             self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
             self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
             self.history_workspace_layout.addWidget(self.history_alerts_panel, 0, 2)
             self.history_workspace_layout.addWidget(self.history_detail_panel, 0, 3)
             self.history_workspace_layout.setColumnStretch(0, 4)
-            self.history_workspace_layout.setColumnStretch(1, 3)
-            self.history_workspace_layout.setColumnStretch(2, 3)
-            self.history_workspace_layout.setColumnStretch(3, 4)
+            self.history_workspace_layout.setColumnStretch(1, 4)
+            self.history_workspace_layout.setColumnStretch(2, 2)
+            self.history_workspace_layout.setColumnStretch(3, 5)
         else:
             self._clear_layout(self.history_combined_layout)
-            self.history_combined_layout.addWidget(self.history_alerts_panel)
+            if has_alerts:
+                self.history_combined_layout.addWidget(self.history_alerts_panel)
             self.history_combined_layout.addWidget(self.history_detail_panel)
             self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
             self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
             self.history_workspace_layout.addWidget(self.history_combined_panel, 0, 2)
             self.history_workspace_layout.setColumnStretch(0, 4)
-            self.history_workspace_layout.setColumnStretch(1, 3)
-            self.history_workspace_layout.setColumnStretch(2, 4)
+            self.history_workspace_layout.setColumnStretch(1, 4)
+            self.history_workspace_layout.setColumnStretch(2, 5)
         self.history_workspace_layout.setRowStretch(0, 1)
 
     def _get_selected_history_entry(self):
@@ -6077,13 +6085,52 @@ class MainWindow(QMainWindow):
         self._render_history_detail(entry)
 
     def _render_history_patient_summary(self, entry):
-        def esc(value, fallback="—"):
-            if value in (None, ""):
-                return fallback
+        def esc(value):
             return html.escape(str(value))
+
+        def normalize(value):
+            if value in (None, "", "-", "—"):
+                return None
+            text = str(value).strip()
+            return text if text else None
 
         def to_title(text):
             return text.title() if text else ""
+
+        def format_time(value):
+            if value in (None, ""):
+                return None
+            if isinstance(value, datetime.datetime):
+                return value.strftime("%H:%M")
+            for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+                try:
+                    parsed = datetime.datetime.strptime(str(value), fmt)
+                    return parsed.strftime("%H:%M")
+                except (ValueError, TypeError):
+                    continue
+            try:
+                parsed = datetime.datetime.fromisoformat(str(value))
+                return parsed.strftime("%H:%M")
+            except Exception:
+                return None
+
+        def add_row(rows, label, value):
+            if value is None:
+                return
+            rows.append(
+                f"<tr><td style='padding:2px 6px; color:#444; width:38%;'><strong>{esc(label)}</strong></td>"
+                f"<td style='padding:2px 6px;'>{esc(value)}</td></tr>"
+            )
+
+        def section_block(title, rows):
+            if not rows:
+                return ""
+            return (
+                f"<div style='margin-top:6px; font-weight:700; color:#1f4e79; font-size:9.7pt;'>"
+                f"{esc(title)}</div>"
+                "<table style='width:100%; border-collapse:collapse; font-size:9.7pt; margin-top:2px;'>"
+                f"{''.join(rows)}</table>"
+            )
 
         first = to_title(" ".join(str(entry.get("first_name") or "").split()))
         last = to_title(" ".join(str(entry.get("last_name") or "").split()))
@@ -6094,38 +6141,73 @@ class MainWindow(QMainWindow):
         elif first:
             patient_name = first
         else:
-            patient_name = to_title(" ".join(str(entry.get("patient") or "").split())) or "—"
+            patient_name = to_title(" ".join(str(entry.get("patient") or "").split()))
 
-        doc_type_value = entry.get("doc_type")
-        doc_label = doc_type_value.upper() if doc_type_value else "Doc."
-        doc_number = entry.get("doc_number") or "—"
-        age_display = entry.get("age") or "—"
-        sex_display = self._format_sex_display(entry.get("sex"))
-        origin_display = entry.get("origin") or "—"
-        hcl_display = entry.get("hcl") or "—"
-        insurance_text = self._format_insurance_display(entry.get("insurance_type"))
-        fua_text = self._format_fua_display(entry)
-        birth_display = self._format_short_date(entry.get("birth_date"))
+        doc_type_value = entry.get("doc_type") or "DNI"
+        doc_label = doc_type_value.upper() if doc_type_value else "DNI"
+        doc_number = normalize(entry.get("doc_number"))
+        age_display = normalize(entry.get("age"))
+        sex_display = normalize(self._format_sex_display(entry.get("sex")))
+        origin_display = normalize(entry.get("origin"))
+        hcl_display = normalize(entry.get("hcl"))
+        insurance_text = normalize(self._format_insurance_display(entry.get("insurance_type")))
+        birth_display = normalize(self._format_short_date(entry.get("birth_date")))
+
+        height_raw = normalize(entry.get("height"))
+        weight_raw = normalize(entry.get("weight"))
+        bp_raw = normalize(entry.get("blood_pressure"))
+        height_num = self._extract_numeric_value(height_raw) if height_raw else None
+        weight_num = self._extract_numeric_value(weight_raw) if weight_raw else None
+        bmi_display = None
+        if height_num and weight_num:
+            height_m = height_num / 100 if height_num > 10 else height_num
+            if height_m > 0:
+                bmi_display = self._format_decimal(weight_num / (height_m ** 2), 1)
+        if height_raw and height_num and not re.search(r'[a-zA-Z]', height_raw):
+            height_raw = f"{self._format_decimal(height_num, 1)} cm"
+        if weight_raw and weight_num and not re.search(r'[a-zA-Z]', weight_raw):
+            weight_raw = f"{self._format_decimal(weight_num, 1)} kg"
+        if bp_raw and isinstance(bp_raw, str):
+            bp_raw = bp_raw.replace("  ", " ").strip()
+
+        order_date_raw = entry.get("order_date_raw")
+        order_date = normalize(self._format_date_display(order_date_raw, ""))
+        order_time = normalize(format_time(order_date_raw))
+        emitted_time = normalize(format_time(entry.get("emitted_at")))
+        requested_by = normalize(entry.get("requested_by"))
+
+        personal_rows = []
+        add_row(personal_rows, "Nombre completo", normalize(patient_name))
+        add_row(personal_rows, doc_label, doc_number)
+        add_row(personal_rows, "Edad", age_display)
+        add_row(personal_rows, "Sexo", sex_display)
+        add_row(personal_rows, "Procedencia", origin_display)
+        add_row(personal_rows, "HCL", hcl_display)
+        add_row(personal_rows, "Seguro", insurance_text)
+        add_row(personal_rows, "F. Nac.", birth_display)
+
+        vitals_rows = []
+        add_row(vitals_rows, "Talla", height_raw)
+        add_row(vitals_rows, "Peso", weight_raw)
+        add_row(vitals_rows, "Presión arterial", bp_raw)
+        add_row(vitals_rows, "IMC", bmi_display)
+
+        order_rows = []
+        add_row(order_rows, "Médico solicitante", requested_by)
+        add_row(order_rows, "Fecha de orden", order_date)
+        add_row(order_rows, "Hora de registro", order_time)
+        add_row(order_rows, "Hora de emisión/validación", emitted_time)
+
         header_date = self._format_date_for_registry(entry)
-        emitted_text = self._format_emission_status(entry.get("emitted"), entry.get("emitted_at"))
-        pregnancy_line = self._format_registry_pregnancy_line(entry)
-        pregnancy_display = pregnancy_line.replace("Gestante:", "Gestación:") if pregnancy_line else "Gestación: No"
+        order_id = normalize(entry.get("order_id"))
+        header_parts = [part for part in [f"Orden #{order_id}" if order_id else None, header_date] if part]
+        header_text = " · ".join(header_parts) if header_parts else "Resumen clínico"
 
         html_output = f"""
-        <div style="font-weight:700; font-size:12pt;">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
-        <div style="color:#555; font-size:10pt; margin-bottom:6px;">
-            Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong>
-        </div>
-        <table style="width:100%; border-collapse:collapse; font-size:10.5pt;">
-            <tr><td style="padding:3px 6px;"><strong>Paciente</strong></td><td style="padding:3px 6px;">{esc(patient_name)}</td></tr>
-            <tr><td style="padding:3px 6px;"><strong>{esc(doc_label)}</strong></td><td style="padding:3px 6px;">{esc(doc_number)}</td></tr>
-            <tr><td style="padding:3px 6px;"><strong>F. Nac.</strong></td><td style="padding:3px 6px;">{esc(birth_display)}</td></tr>
-            <tr><td style="padding:3px 6px;"><strong>Edad</strong></td><td style="padding:3px 6px;">{esc(age_display)}</td></tr>
-            <tr><td style="padding:3px 6px;"><strong>Sexo</strong></td><td style="padding:3px 6px;">{esc(sex_display)}</td></tr>
-            <tr><td style="padding:3px 6px;"><strong>Procedencia</strong></td><td style="padding:3px 6px;">{esc(origin_display)}</td></tr>
-            <tr><td style="padding:3px 6px;"><strong>HCL</strong></td><td style="padding:3px 6px;">{esc(hcl_display)}</td></tr>
-            <tr><td style="padding:3px 6px;"><strong>Gestación</strong></td><td style="padding:3px 6px;">{esc(pregnancy_display.replace("Gestación:", "").strip())}</td></tr>
-        </table>
+        <div style="font-weight:700; font-size:11.2pt; margin-bottom:4px;">{esc(header_text)}</div>
+        {section_block("Datos personales", personal_rows)}
+        {section_block("Signos vitales", vitals_rows)}
+        {section_block("Datos de la orden", order_rows)}
         """
         self.history_patient_summary_label.setText(html_output)
 
@@ -6133,7 +6215,7 @@ class MainWindow(QMainWindow):
         tags = []
         is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
         if is_pregnant:
-            tags.append("Gestación")
+            tags.append("Embarazo")
         text_bits = []
         observations = entry.get("observations")
         if observations:
@@ -6149,16 +6231,22 @@ class MainWindow(QMainWindow):
             tags.append("VIH reactivo previo")
         if re.search(r'\b(tb|tbc|tuberc)', combined):
             tags.append("TB previa")
+        if re.search(r'\bcron', combined):
+            tags.append("Dx crónico")
         if re.search(r'\b(dm|diabet)', combined):
             tags.append("DM")
         if "hta" in combined or "hipert" in combined:
             tags.append("HTA")
         if "anticoag" in combined:
-            tags.append("Anticoagulantes")
-        if "crit" in combined:
-            tags.append("Resultado crítico previo")
+            tags.append("Anticoagulación")
+        has_critical = any(detail.get("is_critical") for detail in entry.get("test_details", []) or [])
+        if "crit" in combined or has_critical:
+            tags.append("Resultados críticos recientes")
         if "repetir" in combined:
             tags.append("Repetir muestra")
+        pending_tests = entry.get("pending_tests") or []
+        if pending_tests:
+            tags.append("Exámenes pendientes hoy")
         deduped = []
         for tag in tags:
             if tag not in deduped:
@@ -6168,36 +6256,49 @@ class MainWindow(QMainWindow):
     def _render_history_alerts(self, tags):
         if not hasattr(self, 'history_alerts_grid'):
             return
+        prev_state = bool(getattr(self, 'history_has_alerts', False))
         while self.history_alerts_grid.count():
             item = self.history_alerts_grid.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.deleteLater()
-        if not tags:
-            self.history_alerts_placeholder.show()
+        has_alerts = bool(tags)
+        self.history_alerts_placeholder.setVisible(False)
+        if not has_alerts:
+            self.history_has_alerts = False
+            if hasattr(self, 'history_alerts_panel'):
+                self.history_alerts_panel.setVisible(False)
+            if prev_state != has_alerts:
+                self._update_history_workspace_layout()
             return
-        self.history_alerts_placeholder.hide()
+        self.history_has_alerts = True
+        if hasattr(self, 'history_alerts_panel'):
+            self.history_alerts_panel.setVisible(True)
         color_map = {
             "Alergias": ("#ffe7cc", "#8a4b08"),
             "VIH reactivo previo": ("#ffd6d6", "#a12626"),
             "TB previa": ("#ffd6d6", "#a12626"),
-            "Resultado crítico previo": ("#ffd6d6", "#a12626"),
-            "Anticoagulantes": ("#fff1cc", "#7a4d00"),
+            "Resultados críticos recientes": ("#ffd6d6", "#a12626"),
+            "Anticoagulación": ("#fff1cc", "#7a4d00"),
             "HTA": ("#fff1cc", "#7a4d00"),
             "DM": ("#fff1cc", "#7a4d00"),
-            "Gestación": ("#e8e1ff", "#4b2e83"),
+            "Embarazo": ("#e8e1ff", "#4b2e83"),
             "Repetir muestra": ("#ffe7cc", "#8a4b08"),
+            "Dx crónico": ("#e7f3ff", "#1f4e79"),
+            "Exámenes pendientes hoy": ("#ffe7cc", "#8a4b08"),
         }
         for idx, tag in enumerate(tags):
             bg, fg = color_map.get(tag, ("#e7f3ff", "#1f4e79"))
             chip = QLabel(tag)
             chip.setStyleSheet(
-                f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 4px 8px; }}"
+                f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 3px 8px; }}"
             )
             chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-            row = idx // 2
-            col = idx % 2
+            row = idx
+            col = 0
             self.history_alerts_grid.addWidget(chip, row, col, Qt.AlignLeft)
+        if prev_state != has_alerts:
+            self._update_history_workspace_layout()
 
     def _render_history_detail(self, entry):
         if not hasattr(self, 'history_detail_tree'):
@@ -6357,6 +6458,7 @@ class MainWindow(QMainWindow):
                 expected_delivery,
                 age_years,
                 order_obs,
+                requested_by,
                 insurance_type,
                 fua_number,
                 emitted,
@@ -6414,6 +6516,7 @@ class MainWindow(QMainWindow):
                 "is_critical": self._detect_critical_result(raw_result, summary_items),
                 "category": category,
                 "order_observations": order_obs,
+                "requested_by": requested_by,
                 "insurance_type": insurance_type,
                 "fua_number": fua_number,
                 "emitted": emitted,

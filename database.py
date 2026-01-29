@@ -997,7 +997,7 @@ class LabDB:
                    p.first_name, p.last_name, p.doc_type, p.doc_number,
                    p.sex, p.birth_date, p.hcl, p.origin, p.height, p.weight, p.blood_pressure,
                    p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
-                   o.age_years, o.observations, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
+                   o.age_years, o.observations, o.requested_by, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
                    ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id
             FROM orders o
             JOIN patients p ON o.patient_id = p.id
