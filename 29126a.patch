@@ -1,0 +1,167 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 55ef3a0d0b9672846f4ec9f1a93f18bd0368af57..4f51cfb80174977205fe78d340fda345c95a3f4d 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -5899,125 +5899,136 @@ class MainWindow(QMainWindow):
+         age_display = entry.get("age") or "—"
+         origin_display = entry.get("origin") or "—"
+         pregnancy_line = self._format_registry_pregnancy_line(entry)
+         is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
+         pregnancy_display = pregnancy_line.replace("Gestante:", "Gestación:") if pregnancy_line else "Gestación: No"
+         pregnancy_short = "Sí" if is_pregnant else "No"
+         pregnancy_detail = pregnancy_display.replace("Gestación:", "").strip() or pregnancy_short
+         height_display = format_measure(entry.get("height"), "cm")
+         weight_display = format_measure(entry.get("weight"), "kg")
+         bp_display = esc(entry.get("blood_pressure")) if entry.get("blood_pressure") else "—"
+ 
+         def list_items(values):
+             cleaned = [esc(item) for item in values if str(item).strip()]
+             if not cleaned:
+                 return "<p class='muted'>—</p>"
+             return "<ul>" + "".join(f"<li>{item}</li>" for item in cleaned) + "</ul>"
+ 
+         sample_status_text = self._format_history_sample_status(entry)
+         sample_lines = [line for line in (sample_status_text or "").split("\n") if line.strip()]
+         observations = entry.get("observations")
+         obs_clean = " ".join(str(observations).split()) if observations else ""
+ 
+         groups = entry.get("groups", {}) if isinstance(entry.get("groups", {}), dict) else {}
+         tests = sorted(set(entry.get("tests", []) or []))
+ 
+-        html_output = f"""
+-        <html>
+-        <head>
+-        <style>
+-        body {{ font-family: "Segoe UI", sans-serif; font-size: 11pt; color: #1d1d1d; }}
+-        .meta {{ color: #555; font-size: 10.5pt; margin-bottom: 6px; }}
+-        .section-title {{ font-weight: 700; font-size: 12pt; margin: 12px 0 6px; }}
+-        .grid {{ width: 100%; border-collapse: collapse; margin-bottom: 6px; }}
+-        .grid td {{ padding: 4px 8px; vertical-align: top; }}
+-        .label {{ color: #666; font-weight: 600; }}
+-        .muted {{ color: #777; margin: 0; }}
+-        ul {{ margin: 4px 0 8px 18px; }}
+-        </style>
+-        </head>
+-        <body>
+-        <div class="section-title">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
+-        <div class="meta">Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong></div>
+-
++        left_panel = f"""
+         <div class="section-title">Datos del paciente</div>
+         <table class="grid">
+           <tr>
+             <td><span class="label">Paciente:</span> {esc(patient_name)}</td>
+             <td><span class="label">Documento:</span> {esc(doc_label)} {esc(doc_number)}</td>
+           </tr>
+           <tr>
+             <td><span class="label">F. Nacimiento:</span> {esc(birth_display)}</td>
+             <td><span class="label">Edad:</span> {esc(age_display)}</td>
+           </tr>
+           <tr>
+             <td><span class="label">Sexo:</span> {esc(sex_display)}</td>
+             <td><span class="label">Procedencia:</span> {esc(origin_display)}</td>
+           </tr>
+           <tr>
+             <td><span class="label">HCL:</span> {esc(hcl_display)}</td>
+             <td><span class="label">Gestación:</span> {esc(pregnancy_short)}</td>
+           </tr>
+         </table>
+ 
+         <div class="section-title">Signos y medidas</div>
+         <table class="grid">
+           <tr>
+             <td><span class="label">Talla:</span> {height_display}</td>
+             <td><span class="label">Peso:</span> {weight_display}</td>
+           </tr>
+           <tr>
+             <td><span class="label">Presión arterial:</span> {bp_display}</td>
+             <td><span class="label">Gestación:</span> {esc(pregnancy_detail)}</td>
+           </tr>
+         </table>
+ 
+         <div class="section-title">Estado de muestras</div>
+         {list_items(sample_lines)}
+         """
+         if obs_clean:
+-            html_output += f"""
++            left_panel += f"""
+             <div class="section-title">Observaciones de la orden</div>
+             <p>{esc(obs_clean)}</p>
+             """
+-        html_output += f"""
++
++        right_panel = f"""
+         <div class="section-title">Exámenes en la orden</div>
+         {list_items(tests)}
+         """
+         category_labels = [
+             ("Hematología", "hematology"),
+             ("Bioquímica", "biochemistry"),
+             ("Micro/Parasitología", "micro_parasito"),
+             ("Otros exámenes", "others"),
+         ]
+         for label, key in category_labels:
+             items = groups.get(key, []) if isinstance(groups, dict) else []
+-            html_output += f"""
++            right_panel += f"""
+             <div class="section-title">{esc(label)}</div>
+             {list_items(items)}
+             """
+-        html_output += "</body></html>"
++
++        html_output = f"""
++        <html>
++        <head>
++        <style>
++        body {{ font-family: "Segoe UI", sans-serif; font-size: 11pt; color: #1d1d1d; }}
++        .meta {{ color: #555; font-size: 10.5pt; margin-bottom: 6px; }}
++        .section-title {{ font-weight: 700; font-size: 12pt; margin: 12px 0 6px; }}
++        .grid {{ width: 100%; border-collapse: collapse; margin-bottom: 6px; }}
++        .grid td {{ padding: 4px 8px; vertical-align: top; }}
++        .label {{ color: #666; font-weight: 600; }}
++        .muted {{ color: #777; margin: 0; }}
++        ul {{ margin: 4px 0 8px 18px; }}
++        .layout {{ width: 100%; border-collapse: collapse; }}
++        .layout td {{ vertical-align: top; }}
++        </style>
++        </head>
++        <body>
++        <div class="section-title">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
++        <div class="meta">Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong></div>
++        <table class="layout">
++          <tr>
++            <td style="width:50%; padding-right: 14px;">{left_panel}</td>
++            <td style="width:50%; padding-left: 14px;">{right_panel}</td>
++          </tr>
++        </table>
++        </body></html>
++        """
+         self.history_preview_text.setHtml(html_output)
+ 
+     def _on_history_selection_changed(self):
+         if not hasattr(self, 'history_table'):
+             return
+         selection = self.history_table.selectionModel()
+         has_selection = bool(selection.selectedRows()) if selection else False
+         if hasattr(self, 'history_open_btn'):
+             self.history_open_btn.setEnabled(has_selection)
+         if hasattr(self, 'history_fua_btn'):
+             enable_fua = False
+             tooltip = ""
+             if has_selection and selection:
+                 indexes = selection.selectedRows()
+                 if indexes:
+                     row = indexes[0].row()
+                     history_items = getattr(self, '_history_results', [])
+                     if 0 <= row < len(history_items):
+                         entry = history_items[row]
+                         insurance = (entry.get("insurance_type") or "").strip().lower()
+                         if insurance == "particular":
+                             tooltip = "Las atenciones particulares no requieren FUA."
+                         else:
+                             enable_fua = True
+             self.history_fua_btn.setEnabled(enable_fua)
+ 
+EOF
+)

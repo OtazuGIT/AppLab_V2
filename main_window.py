@@ -5921,24 +5921,7 @@ class MainWindow(QMainWindow):
         groups = entry.get("groups", {}) if isinstance(entry.get("groups", {}), dict) else {}
         tests = sorted(set(entry.get("tests", []) or []))
 
-        html_output = f"""
-        <html>
-        <head>
-        <style>
-        body {{ font-family: "Segoe UI", sans-serif; font-size: 11pt; color: #1d1d1d; }}
-        .meta {{ color: #555; font-size: 10.5pt; margin-bottom: 6px; }}
-        .section-title {{ font-weight: 700; font-size: 12pt; margin: 12px 0 6px; }}
-        .grid {{ width: 100%; border-collapse: collapse; margin-bottom: 6px; }}
-        .grid td {{ padding: 4px 8px; vertical-align: top; }}
-        .label {{ color: #666; font-weight: 600; }}
-        .muted {{ color: #777; margin: 0; }}
-        ul {{ margin: 4px 0 8px 18px; }}
-        </style>
-        </head>
-        <body>
-        <div class="section-title">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
-        <div class="meta">Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong></div>
-
+        left_panel = f"""
         <div class="section-title">Datos del paciente</div>
         <table class="grid">
           <tr>
@@ -5975,11 +5958,12 @@ class MainWindow(QMainWindow):
         {list_items(sample_lines)}
         """
         if obs_clean:
-            html_output += f"""
+            left_panel += f"""
             <div class="section-title">Observaciones de la orden</div>
             <p>{esc(obs_clean)}</p>
             """
-        html_output += f"""
+
+        right_panel = f"""
         <div class="section-title">Exámenes en la orden</div>
         {list_items(tests)}
         """
@@ -5991,11 +5975,38 @@ class MainWindow(QMainWindow):
         ]
         for label, key in category_labels:
             items = groups.get(key, []) if isinstance(groups, dict) else []
-            html_output += f"""
+            right_panel += f"""
             <div class="section-title">{esc(label)}</div>
             {list_items(items)}
             """
-        html_output += "</body></html>"
+
+        html_output = f"""
+        <html>
+        <head>
+        <style>
+        body {{ font-family: "Segoe UI", sans-serif; font-size: 11pt; color: #1d1d1d; }}
+        .meta {{ color: #555; font-size: 10.5pt; margin-bottom: 6px; }}
+        .section-title {{ font-weight: 700; font-size: 12pt; margin: 12px 0 6px; }}
+        .grid {{ width: 100%; border-collapse: collapse; margin-bottom: 6px; }}
+        .grid td {{ padding: 4px 8px; vertical-align: top; }}
+        .label {{ color: #666; font-weight: 600; }}
+        .muted {{ color: #777; margin: 0; }}
+        ul {{ margin: 4px 0 8px 18px; }}
+        .layout {{ width: 100%; border-collapse: collapse; }}
+        .layout td {{ vertical-align: top; }}
+        </style>
+        </head>
+        <body>
+        <div class="section-title">Orden #{esc(entry.get("order_id", "-"))} · {esc(header_date or "-")}</div>
+        <div class="meta">Seguro: <strong>{esc(insurance_text)}</strong> · FUA: <strong>{esc(fua_text)}</strong> · Emitido: <strong>{esc(emitted_text)}</strong></div>
+        <table class="layout">
+          <tr>
+            <td style="width:50%; padding-right: 14px;">{left_panel}</td>
+            <td style="width:50%; padding-left: 14px;">{right_panel}</td>
+          </tr>
+        </table>
+        </body></html>
+        """
         self.history_preview_text.setHtml(html_output)
 
     def _on_history_selection_changed(self):
