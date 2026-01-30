@@ -6771,6 +6771,51 @@ class MainWindow(QMainWindow):
                 section_key = "pending"
             grouped[section_key].append(item)
         any_rows = False
+        def resolve_template(parsed, test_name):
+            template_key = parsed.get("template") if isinstance(parsed, dict) else None
+            template = None
+            if template_key and template_key in TEST_TEMPLATES:
+                template = TEST_TEMPLATES.get(template_key)
+            elif template_key == "Hematocrito (automático)" and template_key not in TEST_TEMPLATES:
+                TEST_TEMPLATES[template_key] = build_hematocrit_template(include_auto_hemoglobin=True)
+                template = TEST_TEMPLATES.get(template_key)
+            if template is None:
+                template = TEST_TEMPLATES.get(test_name)
+            return template
+
+        def build_structured_values(parsed, template):
+            values = parsed.get("values", {})
+            current_section = ""
+            rows = []
+            for field_def in template.get("fields", []):
+                if field_def.get("type") == "section":
+                    current_section = field_def.get("label", "")
+                    continue
+                key = field_def.get("key")
+                if not key:
+                    continue
+                value = values.get(key, "")
+                if isinstance(value, str):
+                    stripped = value.strip()
+                    if stripped == "":
+                        continue
+                    display_value = " ".join(value.splitlines()).strip()
+                else:
+                    if self._is_blank_result(value):
+                        continue
+                    display_value = value
+                unit = field_def.get("unit")
+                field_type = field_def.get("type")
+                if unit and field_type not in ("bool", "text_area", "choice"):
+                    display_text = str(display_value)
+                    if not display_text.endswith(unit):
+                        display_value = f"{display_text} {unit}"
+                label = field_def.get("label", key)
+                if current_section:
+                    label = f"{current_section}: {label}"
+                rows.append({"param": label, "result": f"{display_value}"})
+            return rows
+
         def build_result_display(detail_item, test_name):
             raw_result = detail_item.get("raw_result")
             observation = detail_item.get("observation")
@@ -6780,9 +6825,11 @@ class MainWindow(QMainWindow):
                 return fallback_text if fallback_text else "Resultado no registrado"
             parsed = self._parse_stored_result(raw_result)
             if parsed.get("type") == "structured":
-                lines = self._format_result_lines(test_name, raw_result, context=detail_context)
-                if lines:
-                    return " | ".join(lines)
+                template = resolve_template(parsed, test_name)
+                if template:
+                    rows = build_structured_values(parsed, template)
+                    if rows:
+                        return " | ".join(f"{row['param']}: {row['result']}" for row in rows)
                 structured_text = self._structured_dict_to_text(parsed.get("values", {}))
                 if structured_text:
                     return structured_text
@@ -6800,43 +6847,10 @@ class MainWindow(QMainWindow):
             issue = detail_item.get("issue")
             cancel_reason = detail_item.get("cancel_reason")
             parsed = self._parse_stored_result(raw_result)
-            template = TEST_TEMPLATES.get(test_name)
-            effective_context = detail_context
+            template = resolve_template(parsed, test_name)
             rows = []
             if parsed.get("type") == "structured" and template:
-                values = parsed.get("values", {})
-                current_section = ""
-                for field_def in template.get("fields", []):
-                    if field_def.get("type") == "section":
-                        current_section = field_def.get("label", "")
-                        continue
-                    key = field_def.get("key")
-                    if not key:
-                        continue
-                    value = values.get(key, "")
-                    if isinstance(value, str):
-                        stripped = value.strip()
-                        if stripped == "":
-                            continue
-                        display_value = " ".join(value.splitlines()).strip()
-                    else:
-                        if self._is_blank_result(value):
-                            continue
-                        display_value = value
-                    unit = field_def.get("unit")
-                    field_type = field_def.get("type")
-                    if unit and field_type not in ("bool", "text_area", "choice"):
-                        display_text = str(display_value)
-                        if not display_text.endswith(unit):
-                            display_value = f"{display_text} {unit}"
-                    reference = self._get_field_reference(field_def, effective_context)
-                    label = field_def.get("label", key)
-                    if current_section:
-                        label = f"{current_section}: {label}"
-                    display_result = f"{display_value}"
-                    if reference:
-                        display_result += f" (Ref: {reference})"
-                    rows.append({"param": label, "result": display_result})
+                rows = build_structured_values(parsed, template)
             if not rows:
                 summary_text = build_result_display(detail_item, test_name)
                 rows.append({"param": "Resultado", "result": summary_text})
