@@ -26,6 +26,29 @@ class LabDB:
         if not test_name:
             return False
         return test_name.strip().lower() in self._referential_lookup
+
+    def _resolve_test_id(self, test_name):
+        if not test_name:
+            return None
+        raw_name = test_name
+        normalized = test_name.strip()
+        for candidate in (raw_name, normalized):
+            if candidate in self.test_map:
+                return self.test_map[candidate]
+        if not normalized:
+            return None
+        self.cur.execute("SELECT id, name FROM tests WHERE name=?", (normalized,))
+        row = self.cur.fetchone()
+        if not row:
+            self.cur.execute("SELECT id, name FROM tests WHERE LOWER(name)=LOWER(?)", (normalized,))
+            row = self.cur.fetchone()
+        if row:
+            test_id, db_name = row
+            self.test_map[db_name] = test_id
+            if normalized != db_name:
+                self.test_map[normalized] = test_id
+            return test_id
+        return None
     def init_db(self):
         # Crear tablas
         self.cur.execute("""
@@ -431,16 +454,17 @@ class LabDB:
         """, (patient_id, date_str, sample_date_str, user_id, observations, requested_by, diagnosis, insurance_value, fua_value, age_value, 0))
         order_id = self.cur.lastrowid
         for name in test_names:
-            if name in self.test_map:
-                test_id = self.test_map[name]
-                status = "pendiente" if self._is_referential_test(name) else "recibida"
-                pending_since = None
-                if status == "pendiente":
-                    pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.cur.execute(
-                    "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
-                    (order_id, test_id, "", status, pending_since)
-                )
+            test_id = self._resolve_test_id(name)
+            if not test_id:
+                continue
+            status = "pendiente" if self._is_referential_test(name) else "recibida"
+            pending_since = None
+            if status == "pendiente":
+                pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.cur.execute(
+                "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
+                (order_id, test_id, "", status, pending_since)
+            )
         self.conn.commit()
         return order_id
     def find_recent_duplicate_order(self, patient_id, test_names, within_minutes=10):
@@ -801,12 +825,7 @@ class LabDB:
     def remove_test_from_order(self, order_id, test_name):
         if not test_name:
             return False
-        if test_name not in self.test_map:
-            self.cur.execute("SELECT id FROM tests WHERE name=?", (test_name,))
-            row = self.cur.fetchone()
-            if row:
-                self.test_map[test_name] = row[0]
-        tid = self.test_map.get(test_name)
+        tid = self._resolve_test_id(test_name)
         if not tid:
             return False
         self.cur.execute("DELETE FROM order_tests WHERE order_id=? AND test_id=?", (order_id, tid))
@@ -980,30 +999,26 @@ class LabDB:
         if not test_names:
             return []
         self.cur.execute("""
-            SELECT t.name FROM order_tests ot
-            JOIN tests t ON ot.test_id = t.id
+            SELECT ot.test_id FROM order_tests ot
             WHERE ot.order_id=?
         """, (order_id,))
-        existing = {row[0] for row in self.cur.fetchall()}
+        existing_ids = {row[0] for row in self.cur.fetchall()}
         added = []
         for name in test_names:
-            if name not in self.test_map:
-                self.cur.execute("SELECT id FROM tests WHERE name=?", (name,))
-                row = self.cur.fetchone()
-                if row:
-                    self.test_map[name] = row[0]
-            if name in self.test_map and name not in existing:
-                test_id = self.test_map[name]
-                status = "pendiente" if self._is_referential_test(name) else "recibida"
-                pending_since = None
-                if status == "pendiente":
-                    import datetime
-                    pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                self.cur.execute(
-                    "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
-                    (order_id, test_id, "", status, pending_since)
-                )
-                added.append(name)
+            test_id = self._resolve_test_id(name)
+            if not test_id or test_id in existing_ids:
+                continue
+            status = "pendiente" if self._is_referential_test(name) else "recibida"
+            pending_since = None
+            if status == "pendiente":
+                import datetime
+                pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            self.cur.execute(
+                "INSERT INTO order_tests(order_id, test_id, result, sample_status, pending_since) VALUES (?,?,?,?,?)",
+                (order_id, test_id, "", status, pending_since)
+            )
+            added.append(name)
+            existing_ids.add(test_id)
         if added:
             self.cur.execute("UPDATE orders SET completed=0 WHERE id=?", (order_id,))
         self.conn.commit()
