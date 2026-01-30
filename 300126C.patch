@@ -1,0 +1,113 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 92152546a3fd80e10965565b04b0929aea0305ac..0c4781d0a103ddba5451025b40739764bd4ebf83 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -6766,92 +6766,94 @@ class MainWindow(QMainWindow):
+             is_emitted = bool(item.get("is_emitted")) or order_emitted or sample_status in {"emitido", "validado"}
+             if is_cancelled or is_rejected:
+                 section_key = "cancelled"
+             elif has_result or is_emitted:
+                 section_key = "results"
+             elif item.get("sample_received"):
+                 section_key = "in_process"
+             else:
+                 section_key = "pending"
+             grouped[section_key].append(item)
+         any_rows = False
+         for section_key, section_label in sections.items():
+             items = grouped.get(section_key, [])
+             if not items:
+                 continue
+             any_rows = True
+             section_item = QTreeWidgetItem([section_label, "", "", ""])
+             section_item.setData(0, Qt.UserRole, "section")
+             section_font = section_item.font(0)
+             section_font.setBold(True)
+             section_item.setFont(0, section_font)
+             self.history_detail_tree.addTopLevelItem(section_item)
+             for detail in items:
+                 test_name = detail.get("test") or "—"
+                 abbr = self._abbreviate_exam_name(test_name)
+-                summary_text = self.buildResultSummary(detail)
+                 status_label = section_label
+                 badge = QLabel(status_label)
+                 if section_key == "results":
+                     badge.setStyleSheet("QLabel { background-color: #e6f7ef; color: #1e8449; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 elif section_key == "in_process":
+                     badge.setStyleSheet("QLabel { background-color: #e7f3ff; color: #1f4e79; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 elif section_key == "pending":
+                     badge.setStyleSheet("QLabel { background-color: #fff1cc; color: #7a4d00; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 else:
+                     badge.setStyleSheet("QLabel { background-color: #f0f0f0; color: #7f8c8d; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 time_value = detail.get("pending_since") or detail.get("sample_date_raw") or detail.get("order_date_raw")
+                 time_display = self._format_time_display(time_value) or "—"
++                detail_text = self._build_exam_detail_text(
++                    test_name,
++                    detail.get("raw_result"),
++                    context=detail_context,
++                    observation=detail.get("observation"),
++                    issue=detail.get("issue"),
++                    cancel_reason=detail.get("cancel_reason")
++                )
++                summary_text = self.buildResultSummary(detail)
++                if detail_text and (not summary_text or summary_text == "Resultado no registrado"):
++                    summary_text = detail_text.splitlines()[0]
+                 test_item = QTreeWidgetItem([abbr, "", "", time_display])
+                 test_item.setData(0, Qt.UserRole, "exam")
+                 test_item.setToolTip(0, test_name)
+                 summary_label = QLabel(summary_text)
+                 summary_label.setWordWrap(True)
+                 summary_label.setToolTip(summary_text)
+                 summary_label.setStyleSheet("padding: 2px 0;")
+                 self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
+                 self.history_detail_tree.setItemWidget(test_item, 2, badge)
+                 section_item.addChild(test_item)
+-                detail_text = self._build_exam_detail_text(
+-                    test_name,
+-                    detail.get("raw_result"),
+-                    context=detail_context,
+-                    observation=detail.get("observation"),
+-                    issue=detail.get("issue"),
+-                    cancel_reason=detail.get("cancel_reason")
+-                )
+                 if detail_text:
+                     detail_item = QTreeWidgetItem(["", "", "", ""])
+                     detail_item.setData(0, Qt.UserRole, "detail")
+                     detail_item.setFirstColumnSpanned(True)
+                     detail_label = QLabel(html.escape(detail_text).replace("\n", "<br>"))
+                     detail_label.setWordWrap(True)
+                     detail_label.setTextFormat(Qt.RichText)
+                     detail_label.setStyleSheet("color: #444; padding: 6px 8px;")
+                     self.history_detail_tree.setItemWidget(detail_item, 0, detail_label)
+                     test_item.addChild(detail_item)
+-                test_item.setExpanded(False)
++                test_item.setExpanded(bool(detail_text))
+             section_item.setExpanded(True)
+         if any_rows:
+             self.history_detail_tree.show()
+             self.history_detail_empty.hide()
+         else:
+             self.history_detail_tree.hide()
+             self.history_detail_empty.show()
+ 
+     def _toggle_history_detail_item(self, item, column):
+         if not item or item.data(0, Qt.UserRole) != "exam":
+             return
+         item.setExpanded(not item.isExpanded())
+ 
+     def _update_history_detail_from_selection(self):
+         entry = self._get_selected_history_entry()
+         if not entry:
+             self._render_history_detail([])
+             return
+         self._render_history_detail(entry)
+ 
+ 
+     def _on_history_selection_changed(self):
+         if not hasattr(self, 'history_table'):
+             return
+         selection = self.history_table.selectionModel()
+ 
+EOF
+)

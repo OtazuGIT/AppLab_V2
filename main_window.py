@@ -6788,7 +6788,6 @@ class MainWindow(QMainWindow):
             for detail in items:
                 test_name = detail.get("test") or "—"
                 abbr = self._abbreviate_exam_name(test_name)
-                summary_text = self.buildResultSummary(detail)
                 status_label = section_label
                 badge = QLabel(status_label)
                 if section_key == "results":
@@ -6801,6 +6800,17 @@ class MainWindow(QMainWindow):
                     badge.setStyleSheet("QLabel { background-color: #f0f0f0; color: #7f8c8d; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
                 time_value = detail.get("pending_since") or detail.get("sample_date_raw") or detail.get("order_date_raw")
                 time_display = self._format_time_display(time_value) or "—"
+                detail_text = self._build_exam_detail_text(
+                    test_name,
+                    detail.get("raw_result"),
+                    context=detail_context,
+                    observation=detail.get("observation"),
+                    issue=detail.get("issue"),
+                    cancel_reason=detail.get("cancel_reason")
+                )
+                summary_text = self.buildResultSummary(detail)
+                if detail_text and (not summary_text or summary_text == "Resultado no registrado"):
+                    summary_text = detail_text.splitlines()[0]
                 test_item = QTreeWidgetItem([abbr, "", "", time_display])
                 test_item.setData(0, Qt.UserRole, "exam")
                 test_item.setToolTip(0, test_name)
@@ -6811,14 +6821,6 @@ class MainWindow(QMainWindow):
                 self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
                 self.history_detail_tree.setItemWidget(test_item, 2, badge)
                 section_item.addChild(test_item)
-                detail_text = self._build_exam_detail_text(
-                    test_name,
-                    detail.get("raw_result"),
-                    context=detail_context,
-                    observation=detail.get("observation"),
-                    issue=detail.get("issue"),
-                    cancel_reason=detail.get("cancel_reason")
-                )
                 if detail_text:
                     detail_item = QTreeWidgetItem(["", "", "", ""])
                     detail_item.setData(0, Qt.UserRole, "detail")
@@ -6829,7 +6831,7 @@ class MainWindow(QMainWindow):
                     detail_label.setStyleSheet("color: #444; padding: 6px 8px;")
                     self.history_detail_tree.setItemWidget(detail_item, 0, detail_label)
                     test_item.addChild(detail_item)
-                test_item.setExpanded(False)
+                test_item.setExpanded(bool(detail_text))
             section_item.setExpanded(True)
         if any_rows:
             self.history_detail_tree.show()
