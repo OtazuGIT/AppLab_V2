@@ -3879,13 +3879,16 @@ class MainWindow(QMainWindow):
                     if cleaned:
                         entry["groups"].setdefault(group_key, []).append(cleaned)
             test_name = record.get("test")
+            test_id = record.get("test_id")
             if test_name:
                 test_clean = str(test_name).strip()
                 if test_clean and test_clean not in entry.setdefault("tests", []):
                     entry["tests"].append(test_clean)
+                detail_key = test_id if test_id not in (None, "") else test_clean
                 detail_map = entry.setdefault("test_detail_map", OrderedDict())
-                detail_entry = detail_map.get(test_clean, {
+                detail_entry = detail_map.get(detail_key, {
                     "test": test_clean,
+                    "test_id": test_id,
                     "group": group_key,
                     "summary_items": [],
                     "summary_text": None,
@@ -3920,7 +3923,8 @@ class MainWindow(QMainWindow):
                 detail_entry["pending_since"] = record.get("pending_since") or detail_entry.get("pending_since")
                 detail_entry["order_date_raw"] = record.get("order_date_raw") or detail_entry.get("order_date_raw")
                 detail_entry["sample_date_raw"] = record.get("sample_date_raw") or detail_entry.get("sample_date_raw")
-                detail_map[test_clean] = detail_entry
+                detail_entry["test_id"] = detail_entry.get("test_id") or test_id
+                detail_map[detail_key] = detail_entry
             if sample_received and not has_result and test_name:
                 entry.setdefault("pending_tests", []).append(test_name)
             status_info = {
@@ -4325,7 +4329,14 @@ class MainWindow(QMainWindow):
     def _extract_result_structure(self, test_name, raw_result, context=None):
         parsed = self._parse_stored_result(raw_result)
         template_key = parsed.get("template") if isinstance(parsed, dict) else None
-        template = TEST_TEMPLATES.get(template_key) if template_key in TEST_TEMPLATES else TEST_TEMPLATES.get(test_name)
+        template = None
+        if template_key and template_key in TEST_TEMPLATES:
+            template = TEST_TEMPLATES.get(template_key)
+        elif template_key == "Hematocrito (automático)" and template_key not in TEST_TEMPLATES:
+            TEST_TEMPLATES[template_key] = build_hematocrit_template(include_auto_hemoglobin=True)
+            template = TEST_TEMPLATES.get(template_key)
+        if template is None:
+            template = TEST_TEMPLATES.get(test_name)
         effective_context = context or self.current_order_context
         if parsed.get("type") == "structured" and template:
             values = parsed.get("values", {})
@@ -4357,6 +4368,7 @@ class MainWindow(QMainWindow):
                     pending_section = None
                 items.append({
                     "type": "value",
+                    "key": key,
                     "label": field_def.get("label", key),
                     "value": display_value,
                     "reference": self._get_field_reference(field_def, effective_context)
@@ -5453,17 +5465,12 @@ class MainWindow(QMainWindow):
         alerts_bar_label = QLabel("Alertas clínicas:")
         alerts_bar_label.setStyleSheet("font-weight: 700; color: #1f2d3d;")
         alerts_bar_layout.addWidget(alerts_bar_label)
-        self.history_alerts_bar_scroll = QScrollArea()
-        self.history_alerts_bar_scroll.setFrameShape(QFrame.NoFrame)
-        self.history_alerts_bar_scroll.setWidgetResizable(True)
-        self.history_alerts_bar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.history_alerts_bar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.history_alerts_bar_container = QWidget()
-        self.history_alerts_bar_layout = QHBoxLayout(self.history_alerts_bar_container)
+        self.history_alerts_bar_layout = QGridLayout(self.history_alerts_bar_container)
         self.history_alerts_bar_layout.setContentsMargins(0, 0, 0, 0)
-        self.history_alerts_bar_layout.setSpacing(6)
-        self.history_alerts_bar_scroll.setWidget(self.history_alerts_bar_container)
-        alerts_bar_layout.addWidget(self.history_alerts_bar_scroll, 1)
+        self.history_alerts_bar_layout.setHorizontalSpacing(6)
+        self.history_alerts_bar_layout.setVerticalSpacing(4)
+        alerts_bar_layout.addWidget(self.history_alerts_bar_container, 1)
         self.history_alerts_bar.setVisible(False)
         history_workspace = QWidget()
         self.history_workspace = history_workspace
@@ -5539,23 +5546,6 @@ class MainWindow(QMainWindow):
         patient_scroll.setWidget(patient_container)
         patient_layout.addWidget(patient_scroll)
 
-        self.history_alerts_panel = QGroupBox("Alertas clínicas")
-        alerts_layout = QVBoxLayout(self.history_alerts_panel)
-        alerts_layout.setContentsMargins(6, 6, 6, 6)
-        alerts_layout.setSpacing(4)
-        self.history_alerts_placeholder = QLabel("Sin alertas registradas.")
-        self.history_alerts_placeholder.setStyleSheet("color: #666; padding: 6px;")
-        self.history_alerts_container = QWidget()
-        self.history_alerts_grid = QGridLayout(self.history_alerts_container)
-        self.history_alerts_grid.setContentsMargins(6, 6, 6, 6)
-        self.history_alerts_grid.setHorizontalSpacing(6)
-        self.history_alerts_grid.setVerticalSpacing(6)
-        alerts_scroll = QScrollArea()
-        alerts_scroll.setWidgetResizable(True)
-        alerts_scroll.setFrameShape(QFrame.NoFrame)
-        alerts_scroll.setWidget(self.history_alerts_container)
-        alerts_layout.addWidget(self.history_alerts_placeholder)
-        alerts_layout.addWidget(alerts_scroll)
         self.history_has_alerts = False
 
         self.history_detail_panel = QGroupBox("Detalle de la orden / Exámenes")
@@ -5584,12 +5574,12 @@ class MainWindow(QMainWindow):
         combined_layout = QVBoxLayout(self.history_combined_panel)
         combined_layout.setContentsMargins(0, 0, 0, 0)
         combined_layout.setSpacing(8)
-        combined_layout.addWidget(self.history_alerts_panel)
         combined_layout.addWidget(self.history_detail_panel)
         self.history_combined_layout = combined_layout
 
         self.history_mobile_toolbox = QToolBox()
 
+        history_tab_layout.addWidget(self.history_alerts_bar)
         history_tab_layout.addWidget(history_workspace)
         history_tab_layout.addWidget(self.history_mobile_toolbox)
         self.history_mobile_toolbox.hide()
@@ -5625,6 +5615,11 @@ class MainWindow(QMainWindow):
             def _history_tab_resize(event):
                 QWidget.resizeEvent(self.history_tab, event)
                 self._update_history_workspace_layout()
+                if hasattr(self, '_history_alert_tags'):
+                    self._layout_history_alerts_bar(
+                        self._history_alert_tags,
+                        getattr(self, '_history_alert_color_map', None)
+                    )
             self.history_tab.resizeEvent = _history_tab_resize
         self._update_history_workspace_layout()
     def refresh_statistics(self):
@@ -6445,10 +6440,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'history_tab') or not hasattr(self, 'history_workspace_layout'):
             return
         width = self.history_tab.width()
-        has_alerts = bool(getattr(self, 'history_has_alerts', False))
         if width < 980:
-            if hasattr(self, 'history_alerts_bar'):
-                self.history_alerts_bar.hide()
             self.history_workspace.hide()
             self.history_mobile_toolbox.show()
             self._clear_layout(self.history_workspace_layout)
@@ -6459,8 +6451,6 @@ class MainWindow(QMainWindow):
                     widget.setParent(None)
             self.history_mobile_toolbox.addItem(self.history_orders_panel, "Historial")
             self.history_mobile_toolbox.addItem(self.history_patient_panel, "Paciente")
-            if has_alerts:
-                self.history_mobile_toolbox.addItem(self.history_alerts_panel, "Alertas")
             self.history_mobile_toolbox.addItem(self.history_detail_panel, "Detalle de orden")
             return
         self.history_mobile_toolbox.hide()
@@ -6471,19 +6461,13 @@ class MainWindow(QMainWindow):
             if widget:
                 widget.setParent(None)
         self._clear_layout(self.history_workspace_layout)
-        row_offset = 1 if has_alerts else 0
-        if has_alerts and hasattr(self, 'history_alerts_bar'):
-            self.history_alerts_bar.show()
-            self.history_workspace_layout.addWidget(self.history_alerts_bar, 0, 1, 1, 2)
-        elif hasattr(self, 'history_alerts_bar'):
-            self.history_alerts_bar.hide()
-        self.history_workspace_layout.addWidget(self.history_orders_panel, row_offset, 0)
-        self.history_workspace_layout.addWidget(self.history_patient_panel, row_offset, 1)
-        self.history_workspace_layout.addWidget(self.history_detail_panel, row_offset, 2)
+        self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
+        self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
+        self.history_workspace_layout.addWidget(self.history_detail_panel, 0, 2)
         self.history_workspace_layout.setColumnStretch(0, 4)
         self.history_workspace_layout.setColumnStretch(1, 4)
         self.history_workspace_layout.setColumnStretch(2, 5)
-        self.history_workspace_layout.setRowStretch(row_offset, 1)
+        self.history_workspace_layout.setRowStretch(0, 1)
 
     def _get_selected_history_entry(self):
         if not hasattr(self, 'history_table'):
@@ -6690,30 +6674,19 @@ class MainWindow(QMainWindow):
         return deduped
 
     def _render_history_alerts(self, tags):
-        if not hasattr(self, 'history_alerts_grid'):
-            return
         prev_state = bool(getattr(self, 'history_has_alerts', False))
-        while self.history_alerts_grid.count():
-            item = self.history_alerts_grid.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
         if hasattr(self, 'history_alerts_bar_layout'):
             self._clear_layout(self.history_alerts_bar_layout)
         has_alerts = bool(tags)
-        self.history_alerts_placeholder.setVisible(False)
         if not has_alerts:
             self.history_has_alerts = False
-            if hasattr(self, 'history_alerts_panel'):
-                self.history_alerts_panel.setVisible(False)
             if hasattr(self, 'history_alerts_bar'):
                 self.history_alerts_bar.setVisible(False)
+            self._history_alert_tags = []
             if prev_state != has_alerts:
                 self._update_history_workspace_layout()
             return
         self.history_has_alerts = True
-        if hasattr(self, 'history_alerts_panel'):
-            self.history_alerts_panel.setVisible(True)
         if hasattr(self, 'history_alerts_bar'):
             self.history_alerts_bar.setVisible(True)
         color_map = {
@@ -6729,28 +6702,71 @@ class MainWindow(QMainWindow):
             "Dx crónico": ("#e7f3ff", "#1f4e79"),
             "Exámenes pendientes hoy": ("#ffe7cc", "#8a4b08"),
         }
+        self._history_alert_tags = tags
+        self._history_alert_color_map = color_map
+        self._layout_history_alerts_bar(tags, color_map)
+        if prev_state != has_alerts:
+            self._update_history_workspace_layout()
+
+    def _layout_history_alerts_bar(self, tags, color_map=None):
+        if not hasattr(self, 'history_alerts_bar_layout'):
+            return
+        self._clear_layout(self.history_alerts_bar_layout)
+        if not tags:
+            return
+        palette = color_map or {}
+        max_width = 0
+        if hasattr(self, 'history_alerts_bar_container'):
+            max_width = self.history_alerts_bar_container.width()
+        if max_width <= 0 and hasattr(self, 'history_alerts_bar'):
+            max_width = self.history_alerts_bar.width() - 40
+        if max_width <= 0:
+            max_width = 400
+        spacing = self.history_alerts_bar_layout.horizontalSpacing()
+        row = 0
+        col = 0
+        used_width = 0
+        max_rows = 2
+        line_heights = [0, 0]
+        overflow_count = 0
         for idx, tag in enumerate(tags):
-            bg, fg = color_map.get(tag, ("#e7f3ff", "#1f4e79"))
+            bg, fg = palette.get(tag, ("#e7f3ff", "#1f4e79"))
             chip = QLabel(tag)
             chip.setStyleSheet(
                 f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 3px 8px; }}"
             )
             chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-            row = idx
-            col = 0
-            self.history_alerts_grid.addWidget(chip, row, col, Qt.AlignLeft)
-            if hasattr(self, 'history_alerts_bar_layout'):
-                bar_chip = QLabel(tag)
-                bar_chip.setStyleSheet(
-                    f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 3px 8px; }}"
-                )
-                bar_chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
-                self.history_alerts_bar_layout.addWidget(bar_chip)
-        if hasattr(self, 'history_alerts_bar_layout'):
-            self.history_alerts_bar_layout.addStretch()
-        if prev_state != has_alerts:
-            self._update_history_workspace_layout()
-
+            chip_size = chip.sizeHint()
+            chip_width = chip_size.width()
+            chip_height = chip_size.height()
+            if used_width and used_width + chip_width > max_width and row + 1 < max_rows:
+                row += 1
+                col = 0
+                used_width = 0
+            if used_width and used_width + chip_width > max_width and row + 1 >= max_rows:
+                overflow_count = len(tags) - idx
+                break
+            self.history_alerts_bar_layout.addWidget(chip, row, col, Qt.AlignLeft)
+            used_width += chip_width + spacing
+            line_heights[row] = max(line_heights[row], chip_height)
+            col += 1
+        if overflow_count:
+            overflow_label = QLabel(f"+{overflow_count}")
+            overflow_label.setStyleSheet(
+                "QLabel { background-color: #edf2f7; color: #1f2d3d; border-radius: 8px; padding: 3px 8px; }"
+            )
+            overflow_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+            self.history_alerts_bar_layout.addWidget(overflow_label, row, col, Qt.AlignLeft)
+            line_heights[row] = max(line_heights[row], overflow_label.sizeHint().height())
+        total_height = 0
+        for idx, height in enumerate(line_heights):
+            if height <= 0:
+                continue
+            if total_height > 0:
+                total_height += self.history_alerts_bar_layout.verticalSpacing()
+            total_height += height
+        if hasattr(self, 'history_alerts_bar_container') and total_height:
+            self.history_alerts_bar_container.setFixedHeight(total_height)
     def _render_history_detail(self, entry):
         if not hasattr(self, 'history_detail_tree'):
             return
@@ -6774,6 +6790,40 @@ class MainWindow(QMainWindow):
             "patient": {"sex": entry.get("sex") if isinstance(entry, dict) else None, "birth_date": entry.get("birth_date") if isinstance(entry, dict) else None},
             "order": {"age_years": age_years}
         }
+        def build_parameter_rows(detail_item, context):
+            test_name = detail_item.get("test") or ""
+            raw_result = detail_item.get("raw_result")
+            structure = self._extract_result_structure(test_name, raw_result, context=context)
+            rows = []
+            if structure.get("type") == "structured":
+                for item in structure.get("items", []):
+                    if item.get("type") != "value":
+                        continue
+                    value = item.get("value")
+                    if self._is_blank_result(value):
+                        value = "Resultado no registrado"
+                    rows.append({
+                        "param": item.get("label", "") or "Resultado",
+                        "result": value,
+                        "param_id": item.get("key")
+                    })
+                if not rows:
+                    rows.append({"param": "Resultado", "result": "Resultado no registrado", "param_id": "resultado"})
+            else:
+                value = structure.get("value", "")
+                if self._is_blank_result(value):
+                    value = "Resultado no registrado"
+                rows.append({"param": "Resultado", "result": value, "param_id": "resultado"})
+            issue = detail_item.get("issue")
+            cancel_reason = detail_item.get("cancel_reason")
+            observation = detail_item.get("observation")
+            if issue:
+                rows.append({"param": "Notas", "result": issue, "param_id": "issue"})
+            if cancel_reason:
+                rows.append({"param": "Motivo de anulación", "result": cancel_reason, "param_id": "cancel_reason"})
+            if observation:
+                rows.append({"param": "Observaciones", "result": observation, "param_id": "observation"})
+            return rows
         sections = OrderedDict([
             ("results", "Realizado"),
             ("in_process", "En proceso"),
@@ -6798,105 +6848,6 @@ class MainWindow(QMainWindow):
                 section_key = "pending"
             grouped[section_key].append(item)
         any_rows = False
-        def resolve_template(parsed, test_name):
-            template_key = parsed.get("template") if isinstance(parsed, dict) else None
-            template = None
-            if template_key and template_key in TEST_TEMPLATES:
-                template = TEST_TEMPLATES.get(template_key)
-            elif template_key == "Hematocrito (automático)" and template_key not in TEST_TEMPLATES:
-                TEST_TEMPLATES[template_key] = build_hematocrit_template(include_auto_hemoglobin=True)
-                template = TEST_TEMPLATES.get(template_key)
-            if template is None:
-                template = TEST_TEMPLATES.get(test_name)
-            return template
-
-        def build_structured_values(parsed, template):
-            values = parsed.get("values", {})
-            current_section = ""
-            rows = []
-            for field_def in template.get("fields", []):
-                if field_def.get("type") == "section":
-                    current_section = field_def.get("label", "")
-                    continue
-                key = field_def.get("key")
-                if not key:
-                    continue
-                value = values.get(key, "")
-                if isinstance(value, str):
-                    stripped = value.strip()
-                    if stripped == "":
-                        continue
-                    display_value = " ".join(value.splitlines()).strip()
-                else:
-                    if self._is_blank_result(value):
-                        continue
-                    display_value = value
-                unit = field_def.get("unit")
-                field_type = field_def.get("type")
-                if unit and field_type not in ("bool", "text_area", "choice"):
-                    display_text = str(display_value)
-                    if not display_text.endswith(unit):
-                        display_value = f"{display_text} {unit}"
-                label = field_def.get("label", key)
-                if current_section:
-                    label = f"{current_section}: {label}"
-                rows.append({"param": label, "result": f"{display_value}"})
-            return rows
-
-        def build_result_display(detail_item, test_name):
-            raw_result = detail_item.get("raw_result")
-            observation = detail_item.get("observation")
-            issue = detail_item.get("issue")
-            summary_text = detail_item.get("summary_text")
-            summary_items = detail_item.get("summary_items") or []
-            if summary_text:
-                return str(summary_text)
-            if summary_items:
-                return "; ".join(str(item) for item in summary_items if item)
-            if self._is_blank_result(raw_result):
-                fallback_text = (observation or issue or "").strip()
-                return fallback_text if fallback_text else "Resultado no registrado"
-            parsed = self._parse_stored_result(raw_result)
-            if parsed.get("type") == "structured":
-                template = resolve_template(parsed, test_name)
-                if template:
-                    rows = build_structured_values(parsed, template)
-                    if rows:
-                        return " | ".join(f"{row['param']}: {row['result']}" for row in rows)
-                structured_text = self._structured_dict_to_text(parsed.get("values", {}))
-                if structured_text:
-                    return structured_text
-            text_value = parsed.get("value", raw_result or "")
-            if isinstance(text_value, str):
-                text_value = text_value.strip()
-            if text_value:
-                return str(text_value)
-            fallback_text = (observation or issue or "").strip()
-            return fallback_text if fallback_text else "Resultado no registrado"
-
-        def build_parameter_rows(detail_item, test_name):
-            raw_result = detail_item.get("raw_result")
-            observation = detail_item.get("observation")
-            issue = detail_item.get("issue")
-            cancel_reason = detail_item.get("cancel_reason")
-            parsed = self._parse_stored_result(raw_result)
-            template = resolve_template(parsed, test_name)
-            rows = []
-            if parsed.get("type") == "structured" and template:
-                rows = build_structured_values(parsed, template)
-            if not rows:
-                summary_text = build_result_display(detail_item, test_name)
-                if isinstance(summary_text, str) and summary_text.strip() == "":
-                    summary_text = "Resultado no registrado"
-                rows.append({"param": "Resultado", "result": summary_text})
-            if issue:
-                rows.append({"param": "Notas", "result": issue})
-            if cancel_reason:
-                rows.append({"param": "Motivo de anulación", "result": cancel_reason})
-            if observation:
-                rows.append({"param": "Observaciones", "result": observation})
-            return rows
-
         for section_key, section_label in sections.items():
             items = grouped.get(section_key, [])
             if not items:
@@ -6912,14 +6863,16 @@ class MainWindow(QMainWindow):
             for detail in items:
                 test_name = detail.get("test") or "—"
                 display_name = test_name
-                parameter_rows = build_parameter_rows(detail, test_name)
+                parameter_rows = build_parameter_rows(detail, detail_context)
                 test_item = QTreeWidgetItem([display_name, "", ""])
                 test_item.setData(0, Qt.UserRole, "exam")
+                test_item.setData(0, Qt.UserRole + 1, detail.get("test_id"))
                 test_item.setToolTip(0, test_name)
                 section_item.addChild(test_item)
                 for row in parameter_rows:
                     param_item = QTreeWidgetItem(["", row["param"], ""])
                     param_item.setData(0, Qt.UserRole, "param")
+                    param_item.setData(1, Qt.UserRole + 1, row.get("param_id"))
                     result_text = str(row["result"])
                     result_label = QLabel(result_text)
                     result_label.setWordWrap(True)
@@ -7010,6 +6963,7 @@ class MainWindow(QMainWindow):
                 order_id,
                 date_str,
                 sample_date_str,
+                test_id,
                 test_name,
                 raw_result,
                 category,
@@ -7083,6 +7037,7 @@ class MainWindow(QMainWindow):
                 "expected_delivery_date": expected_delivery,
                 "age": age_display,
                 "test": test_name,
+                "test_id": test_id,
                 "result": result_text,
                 "summary_items": summary_items,
                 "summary_text": summary_text,
