@@ -1,0 +1,109 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index bbd7cba7eabd5e2ad667ffa7cc6d523718d63ec2..5f18a06ec3f842c67a0f693dc6c9581f812e5ad9 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -6750,89 +6750,96 @@ class MainWindow(QMainWindow):
+             ("results", "Realizado"),
+             ("in_process", "En proceso"),
+             ("pending", "Pendiente"),
+             ("cancelled", "Anulado"),
+         ])
+         grouped = {key: [] for key in sections}
+         order_emitted = bool(entry.get("emitted")) if isinstance(entry, dict) else False
+         for item in detail_items:
+             sample_status = (item.get("sample_status") or "").strip().lower()
+             is_cancelled = bool(item.get("is_cancelled")) or sample_status == "anulado"
+             is_rejected = sample_status == "rechazada"
+             has_result = bool(item.get("has_result"))
+             is_emitted = bool(item.get("is_emitted")) or order_emitted or sample_status in {"emitido", "validado"}
+             if is_cancelled or is_rejected:
+                 section_key = "cancelled"
+             elif has_result or is_emitted:
+                 section_key = "results"
+             elif item.get("sample_received"):
+                 section_key = "in_process"
+             else:
+                 section_key = "pending"
+             grouped[section_key].append(item)
+         any_rows = False
+         def build_result_display(detail_item, test_name):
+             raw_result = detail_item.get("raw_result")
++            observation = detail_item.get("observation")
++            issue = detail_item.get("issue")
+             if self._is_blank_result(raw_result):
+-                return "Resultado no registrado"
++                fallback_text = (observation or issue or "").strip()
++                return fallback_text if fallback_text else "Resultado no registrado"
+             parsed = self._parse_stored_result(raw_result)
+             if parsed.get("type") == "structured":
+                 lines = self._format_result_lines(test_name, raw_result, context=detail_context)
+                 if lines:
+                     return " | ".join(lines)
++                structured_text = self._structured_dict_to_text(parsed.get("values", {}))
++                if structured_text:
++                    return structured_text
+             text_value = parsed.get("value", raw_result or "")
+             if isinstance(text_value, str):
+                 text_value = text_value.strip()
+             if text_value:
+                 return str(text_value)
+-            return "Resultado no registrado"
++            fallback_text = (observation or issue or "").strip()
++            return fallback_text if fallback_text else "Resultado no registrado"
+ 
+         for section_key, section_label in sections.items():
+             items = grouped.get(section_key, [])
+             if not items:
+                 continue
+             any_rows = True
+             section_item = QTreeWidgetItem([section_label, ""])
+             section_item.setData(0, Qt.UserRole, "section")
+             section_font = section_item.font(0)
+             section_font.setBold(True)
+             section_item.setFont(0, section_font)
+             section_item.setFirstColumnSpanned(True)
+             self.history_detail_tree.addTopLevelItem(section_item)
+             for detail in items:
+                 test_name = detail.get("test") or "—"
+-                abbr = self._abbreviate_exam_name(test_name)
++                display_name = test_name
+                 detail_text = self._build_exam_detail_text(
+                     test_name,
+                     detail.get("raw_result"),
+                     context=detail_context,
+                     observation=detail.get("observation"),
+                     issue=detail.get("issue"),
+                     cancel_reason=detail.get("cancel_reason")
+                 )
+                 summary_text = build_result_display(detail, test_name)
+-                test_item = QTreeWidgetItem([abbr, ""])
++                test_item = QTreeWidgetItem([display_name, ""])
+                 test_item.setData(0, Qt.UserRole, "exam")
+                 test_item.setToolTip(0, test_name)
+                 summary_label = QLabel(summary_text)
+                 summary_label.setWordWrap(True)
+                 summary_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                 summary_label.setMinimumWidth(0)
+                 summary_label.setToolTip(summary_text)
+                 summary_label.setStyleSheet("padding: 2px 0;")
+                 self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
+                 section_item.addChild(test_item)
+                 if detail_text:
+                     detail_item = QTreeWidgetItem(["", ""])
+                     detail_item.setData(0, Qt.UserRole, "detail")
+                     detail_item.setFirstColumnSpanned(True)
+                     detail_label = QLabel(html.escape(detail_text).replace("\n", "<br>"))
+                     detail_label.setWordWrap(True)
+                     detail_label.setTextFormat(Qt.RichText)
+                     detail_label.setStyleSheet("color: #444; padding: 6px 8px;")
+                     self.history_detail_tree.setItemWidget(detail_item, 0, detail_label)
+                     test_item.addChild(detail_item)
+                 test_item.setExpanded(bool(detail_text))
+             section_item.setExpanded(True)
+         if any_rows:
+             self.history_detail_tree.show()
+             self.history_detail_empty.hide()
+ 
+EOF
+)

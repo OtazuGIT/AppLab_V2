@@ -6772,19 +6772,26 @@ class MainWindow(QMainWindow):
         any_rows = False
         def build_result_display(detail_item, test_name):
             raw_result = detail_item.get("raw_result")
+            observation = detail_item.get("observation")
+            issue = detail_item.get("issue")
             if self._is_blank_result(raw_result):
-                return "Resultado no registrado"
+                fallback_text = (observation or issue or "").strip()
+                return fallback_text if fallback_text else "Resultado no registrado"
             parsed = self._parse_stored_result(raw_result)
             if parsed.get("type") == "structured":
                 lines = self._format_result_lines(test_name, raw_result, context=detail_context)
                 if lines:
                     return " | ".join(lines)
+                structured_text = self._structured_dict_to_text(parsed.get("values", {}))
+                if structured_text:
+                    return structured_text
             text_value = parsed.get("value", raw_result or "")
             if isinstance(text_value, str):
                 text_value = text_value.strip()
             if text_value:
                 return str(text_value)
-            return "Resultado no registrado"
+            fallback_text = (observation or issue or "").strip()
+            return fallback_text if fallback_text else "Resultado no registrado"
 
         for section_key, section_label in sections.items():
             items = grouped.get(section_key, [])
@@ -6800,7 +6807,7 @@ class MainWindow(QMainWindow):
             self.history_detail_tree.addTopLevelItem(section_item)
             for detail in items:
                 test_name = detail.get("test") or "—"
-                abbr = self._abbreviate_exam_name(test_name)
+                display_name = test_name
                 detail_text = self._build_exam_detail_text(
                     test_name,
                     detail.get("raw_result"),
@@ -6810,7 +6817,7 @@ class MainWindow(QMainWindow):
                     cancel_reason=detail.get("cancel_reason")
                 )
                 summary_text = build_result_display(detail, test_name)
-                test_item = QTreeWidgetItem([abbr, ""])
+                test_item = QTreeWidgetItem([display_name, ""])
                 test_item.setData(0, Qt.UserRole, "exam")
                 test_item.setToolTip(0, test_name)
                 summary_label = QLabel(summary_text)
