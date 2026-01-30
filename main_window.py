@@ -5544,7 +5544,7 @@ class MainWindow(QMainWindow):
         self.history_detail_empty.setAlignment(Qt.AlignCenter)
         self.history_detail_empty.setStyleSheet("color: #666; padding: 12px;")
         self.history_detail_tree = QTreeWidget()
-        self.history_detail_tree.setHeaderLabels(["Examen", "Resultado"])
+        self.history_detail_tree.setHeaderLabels(["Examen", "Parámetro", "Resultado"])
         self.history_detail_tree.setRootIsDecorated(False)
         self.history_detail_tree.setAlternatingRowColors(True)
         self.history_detail_tree.setItemsExpandable(True)
@@ -5552,7 +5552,8 @@ class MainWindow(QMainWindow):
         self.history_detail_tree.setTextElideMode(Qt.ElideNone)
         header = self.history_detail_tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.Stretch)
         self.history_detail_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.history_detail_tree.itemClicked.connect(self._toggle_history_detail_item)
         detail_layout.addWidget(self.history_detail_empty)
@@ -6793,12 +6794,66 @@ class MainWindow(QMainWindow):
             fallback_text = (observation or issue or "").strip()
             return fallback_text if fallback_text else "Resultado no registrado"
 
+        def build_parameter_rows(detail_item, test_name):
+            raw_result = detail_item.get("raw_result")
+            observation = detail_item.get("observation")
+            issue = detail_item.get("issue")
+            cancel_reason = detail_item.get("cancel_reason")
+            parsed = self._parse_stored_result(raw_result)
+            template = TEST_TEMPLATES.get(test_name)
+            effective_context = detail_context
+            rows = []
+            if parsed.get("type") == "structured" and template:
+                values = parsed.get("values", {})
+                current_section = ""
+                for field_def in template.get("fields", []):
+                    if field_def.get("type") == "section":
+                        current_section = field_def.get("label", "")
+                        continue
+                    key = field_def.get("key")
+                    if not key:
+                        continue
+                    value = values.get(key, "")
+                    if isinstance(value, str):
+                        stripped = value.strip()
+                        if stripped == "":
+                            continue
+                        display_value = " ".join(value.splitlines()).strip()
+                    else:
+                        if self._is_blank_result(value):
+                            continue
+                        display_value = value
+                    unit = field_def.get("unit")
+                    field_type = field_def.get("type")
+                    if unit and field_type not in ("bool", "text_area", "choice"):
+                        display_text = str(display_value)
+                        if not display_text.endswith(unit):
+                            display_value = f"{display_text} {unit}"
+                    reference = self._get_field_reference(field_def, effective_context)
+                    label = field_def.get("label", key)
+                    if current_section:
+                        label = f"{current_section}: {label}"
+                    display_result = f"{display_value}"
+                    if reference:
+                        display_result += f" (Ref: {reference})"
+                    rows.append({"param": label, "result": display_result})
+            if not rows:
+                summary_text = build_result_display(detail_item, test_name)
+                rows.append({"param": "Resultado", "result": summary_text})
+            if issue:
+                rows.append({"param": "Notas", "result": issue})
+            if cancel_reason:
+                rows.append({"param": "Motivo de anulación", "result": cancel_reason})
+            if observation:
+                rows.append({"param": "Observaciones", "result": observation})
+            return rows
+
         for section_key, section_label in sections.items():
             items = grouped.get(section_key, [])
             if not items:
                 continue
             any_rows = True
-            section_item = QTreeWidgetItem([section_label, ""])
+            section_item = QTreeWidgetItem([section_label, "", ""])
             section_item.setData(0, Qt.UserRole, "section")
             section_font = section_item.font(0)
             section_font.setBold(True)
@@ -6808,37 +6863,25 @@ class MainWindow(QMainWindow):
             for detail in items:
                 test_name = detail.get("test") or "—"
                 display_name = test_name
-                detail_text = self._build_exam_detail_text(
-                    test_name,
-                    detail.get("raw_result"),
-                    context=detail_context,
-                    observation=detail.get("observation"),
-                    issue=detail.get("issue"),
-                    cancel_reason=detail.get("cancel_reason")
-                )
-                summary_text = build_result_display(detail, test_name)
-                test_item = QTreeWidgetItem([display_name, ""])
+                parameter_rows = build_parameter_rows(detail, test_name)
+                test_item = QTreeWidgetItem([display_name, "", ""])
                 test_item.setData(0, Qt.UserRole, "exam")
                 test_item.setToolTip(0, test_name)
-                summary_label = QLabel(summary_text)
-                summary_label.setWordWrap(True)
-                summary_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                summary_label.setMinimumWidth(0)
-                summary_label.setToolTip(summary_text)
-                summary_label.setStyleSheet("padding: 2px 0;")
-                self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
                 section_item.addChild(test_item)
-                if detail_text:
-                    detail_item = QTreeWidgetItem(["", ""])
-                    detail_item.setData(0, Qt.UserRole, "detail")
-                    detail_item.setFirstColumnSpanned(True)
-                    detail_label = QLabel(html.escape(detail_text).replace("\n", "<br>"))
-                    detail_label.setWordWrap(True)
-                    detail_label.setTextFormat(Qt.RichText)
-                    detail_label.setStyleSheet("color: #444; padding: 6px 8px;")
-                    self.history_detail_tree.setItemWidget(detail_item, 0, detail_label)
-                    test_item.addChild(detail_item)
-                test_item.setExpanded(bool(detail_text))
+                for row in parameter_rows:
+                    param_item = QTreeWidgetItem(["", row["param"], ""])
+                    param_item.setData(0, Qt.UserRole, "param")
+                    result_text = str(row["result"])
+                    result_label = QLabel(result_text)
+                    result_label.setWordWrap(True)
+                    result_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                    result_label.setMinimumWidth(0)
+                    result_label.setToolTip(result_text)
+                    result_label.setTextFormat(Qt.PlainText)
+                    result_label.setStyleSheet("padding: 2px 0;")
+                    self.history_detail_tree.setItemWidget(param_item, 2, result_label)
+                    test_item.addChild(param_item)
+                test_item.setExpanded(True)
             section_item.setExpanded(True)
         if any_rows:
             self.history_detail_tree.show()
