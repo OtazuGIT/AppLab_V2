@@ -3714,31 +3714,8 @@ class MainWindow(QMainWindow):
                 return None
             return cleaned
 
-        def normalize_qualitative(text):
-            if not text:
-                return None
-            normalized = self._normalize_text(text)
-            if "no react" in normalized or "noreact" in normalized:
-                return "No reactivo"
-            if "reactiv" in normalized:
-                return "Reactivo"
-            if "positiv" in normalized:
-                return "Positivo"
-            if "negativ" in normalized:
-                return "Negativo"
-            return None
-
-        def extract_unit(text):
-            if not isinstance(text, str):
-                return None
-            match = re.search(r"-?\d+(?:[.,]\d+)?\s*([^\d\s].*)", text.strip())
-            if match:
-                return match.group(1).strip()
-            return None
-
         test_name = detail.get("test") or ""
         raw_result = detail.get("raw_result")
-        observation = detail.get("observation")
 
         summary_text = pick_summary(self._build_exam_result_summary(test_name, raw_result))
         if summary_text:
@@ -3749,35 +3726,8 @@ class MainWindow(QMainWindow):
         if isinstance(text_value, str):
             text_value = text_value.strip()
 
-        qualitative = normalize_qualitative(text_value) or normalize_qualitative(observation)
-        if qualitative:
-            return qualitative
-
-        numeric_value = self._extract_numeric_value(text_value)
-        if numeric_value is not None:
-            formatted_value = self._format_decimal(numeric_value)
-            unit = extract_unit(text_value)
-            if not unit:
-                template = TEST_TEMPLATES.get(test_name)
-                if template:
-                    fields = [field for field in template.get("fields", []) if field.get("key") and field.get("type") != "section"]
-                    if len(fields) == 1:
-                        unit = fields[0].get("unit")
-            abbr = self._abbreviate_exam_name(test_name)
-            unit_text = f" {unit}" if unit else ""
-            return f"{abbr} {formatted_value}{unit_text}".strip()
-
-        if text_value:
+        if text_value and not self._is_time_only_result(text_value):
             return str(text_value)
-
-        summary_text = pick_summary(observation)
-        if summary_text:
-            return summary_text
-
-        if detail_text:
-            detail_line = pick_summary(detail_text.splitlines()[0])
-            if detail_line:
-                return detail_line
 
         return "Resultado no registrado"
 
