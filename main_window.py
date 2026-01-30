@@ -5445,6 +5445,26 @@ class MainWindow(QMainWindow):
         history_tab_layout.addLayout(history_toolbar_layout)
 
         self.history_tab = history_tab
+        self.history_alerts_bar = QFrame()
+        self.history_alerts_bar.setObjectName("HistoryAlertsBar")
+        alerts_bar_layout = QHBoxLayout(self.history_alerts_bar)
+        alerts_bar_layout.setContentsMargins(12, 6, 12, 6)
+        alerts_bar_layout.setSpacing(10)
+        alerts_bar_label = QLabel("Alertas clínicas:")
+        alerts_bar_label.setStyleSheet("font-weight: 700; color: #1f2d3d;")
+        alerts_bar_layout.addWidget(alerts_bar_label)
+        self.history_alerts_bar_scroll = QScrollArea()
+        self.history_alerts_bar_scroll.setFrameShape(QFrame.NoFrame)
+        self.history_alerts_bar_scroll.setWidgetResizable(True)
+        self.history_alerts_bar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.history_alerts_bar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.history_alerts_bar_container = QWidget()
+        self.history_alerts_bar_layout = QHBoxLayout(self.history_alerts_bar_container)
+        self.history_alerts_bar_layout.setContentsMargins(0, 0, 0, 0)
+        self.history_alerts_bar_layout.setSpacing(6)
+        self.history_alerts_bar_scroll.setWidget(self.history_alerts_bar_container)
+        alerts_bar_layout.addWidget(self.history_alerts_bar_scroll, 1)
+        self.history_alerts_bar.setVisible(False)
         history_workspace = QWidget()
         self.history_workspace = history_workspace
         self.history_workspace_layout = QGridLayout(history_workspace)
@@ -6427,6 +6447,8 @@ class MainWindow(QMainWindow):
         width = self.history_tab.width()
         has_alerts = bool(getattr(self, 'history_has_alerts', False))
         if width < 980:
+            if hasattr(self, 'history_alerts_bar'):
+                self.history_alerts_bar.hide()
             self.history_workspace.hide()
             self.history_mobile_toolbox.show()
             self._clear_layout(self.history_workspace_layout)
@@ -6449,29 +6471,19 @@ class MainWindow(QMainWindow):
             if widget:
                 widget.setParent(None)
         self._clear_layout(self.history_workspace_layout)
-        show_alerts_column = width >= 1400 and has_alerts
-        column_count = 4 if show_alerts_column else 3
-        if column_count == 4:
-            self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
-            self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
-            self.history_workspace_layout.addWidget(self.history_alerts_panel, 0, 2)
-            self.history_workspace_layout.addWidget(self.history_detail_panel, 0, 3)
-            self.history_workspace_layout.setColumnStretch(0, 4)
-            self.history_workspace_layout.setColumnStretch(1, 4)
-            self.history_workspace_layout.setColumnStretch(2, 2)
-            self.history_workspace_layout.setColumnStretch(3, 5)
-        else:
-            self._clear_layout(self.history_combined_layout)
-            if has_alerts:
-                self.history_combined_layout.addWidget(self.history_alerts_panel)
-            self.history_combined_layout.addWidget(self.history_detail_panel)
-            self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
-            self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
-            self.history_workspace_layout.addWidget(self.history_combined_panel, 0, 2)
-            self.history_workspace_layout.setColumnStretch(0, 4)
-            self.history_workspace_layout.setColumnStretch(1, 4)
-            self.history_workspace_layout.setColumnStretch(2, 5)
-        self.history_workspace_layout.setRowStretch(0, 1)
+        row_offset = 1 if has_alerts else 0
+        if has_alerts and hasattr(self, 'history_alerts_bar'):
+            self.history_alerts_bar.show()
+            self.history_workspace_layout.addWidget(self.history_alerts_bar, 0, 1, 1, 2)
+        elif hasattr(self, 'history_alerts_bar'):
+            self.history_alerts_bar.hide()
+        self.history_workspace_layout.addWidget(self.history_orders_panel, row_offset, 0)
+        self.history_workspace_layout.addWidget(self.history_patient_panel, row_offset, 1)
+        self.history_workspace_layout.addWidget(self.history_detail_panel, row_offset, 2)
+        self.history_workspace_layout.setColumnStretch(0, 4)
+        self.history_workspace_layout.setColumnStretch(1, 4)
+        self.history_workspace_layout.setColumnStretch(2, 5)
+        self.history_workspace_layout.setRowStretch(row_offset, 1)
 
     def _get_selected_history_entry(self):
         if not hasattr(self, 'history_table'):
@@ -6686,18 +6698,24 @@ class MainWindow(QMainWindow):
             widget = item.widget()
             if widget:
                 widget.deleteLater()
+        if hasattr(self, 'history_alerts_bar_layout'):
+            self._clear_layout(self.history_alerts_bar_layout)
         has_alerts = bool(tags)
         self.history_alerts_placeholder.setVisible(False)
         if not has_alerts:
             self.history_has_alerts = False
             if hasattr(self, 'history_alerts_panel'):
                 self.history_alerts_panel.setVisible(False)
+            if hasattr(self, 'history_alerts_bar'):
+                self.history_alerts_bar.setVisible(False)
             if prev_state != has_alerts:
                 self._update_history_workspace_layout()
             return
         self.history_has_alerts = True
         if hasattr(self, 'history_alerts_panel'):
             self.history_alerts_panel.setVisible(True)
+        if hasattr(self, 'history_alerts_bar'):
+            self.history_alerts_bar.setVisible(True)
         color_map = {
             "Alergias": ("#ffe7cc", "#8a4b08"),
             "VIH reactivo previo": ("#ffd6d6", "#a12626"),
@@ -6721,6 +6739,15 @@ class MainWindow(QMainWindow):
             row = idx
             col = 0
             self.history_alerts_grid.addWidget(chip, row, col, Qt.AlignLeft)
+            if hasattr(self, 'history_alerts_bar_layout'):
+                bar_chip = QLabel(tag)
+                bar_chip.setStyleSheet(
+                    f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 3px 8px; }}"
+                )
+                bar_chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+                self.history_alerts_bar_layout.addWidget(bar_chip)
+        if hasattr(self, 'history_alerts_bar_layout'):
+            self.history_alerts_bar_layout.addStretch()
         if prev_state != has_alerts:
             self._update_history_workspace_layout()
 
@@ -6820,6 +6847,12 @@ class MainWindow(QMainWindow):
             raw_result = detail_item.get("raw_result")
             observation = detail_item.get("observation")
             issue = detail_item.get("issue")
+            summary_text = detail_item.get("summary_text")
+            summary_items = detail_item.get("summary_items") or []
+            if summary_text:
+                return str(summary_text)
+            if summary_items:
+                return "; ".join(str(item) for item in summary_items if item)
             if self._is_blank_result(raw_result):
                 fallback_text = (observation or issue or "").strip()
                 return fallback_text if fallback_text else "Resultado no registrado"
@@ -6853,6 +6886,8 @@ class MainWindow(QMainWindow):
                 rows = build_structured_values(parsed, template)
             if not rows:
                 summary_text = build_result_display(detail_item, test_name)
+                if isinstance(summary_text, str) and summary_text.strip() == "":
+                    summary_text = "Resultado no registrado"
                 rows.append({"param": "Resultado", "result": summary_text})
             if issue:
                 rows.append({"param": "Notas", "result": issue})

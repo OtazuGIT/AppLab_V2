@@ -1,0 +1,383 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 08c4ef1cc8722fbd6bcf03206be94ba5ec216c86..39171b13d3a4555e9adfdb2d184687144ffb4372 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -5423,50 +5423,70 @@ class MainWindow(QMainWindow):
+         history_tab_layout.setSpacing(8)
+ 
+         history_toolbar_layout = QHBoxLayout()
+         history_toolbar_layout.addWidget(QLabel("Acciones rápidas:"))
+         self.history_open_btn = QToolButton()
+         self.history_open_btn.setToolTip("Ver en emisión")
+         self.history_open_btn.setIcon(self.style().standardIcon(QStyle.SP_DialogOpenButton))
+         self.history_open_btn.setEnabled(False)
+         self.history_fua_btn = QToolButton()
+         self.history_fua_btn.setToolTip("Registrar FUA")
+         self.history_fua_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogNewFolder))
+         self.history_fua_btn.setEnabled(False)
+         self.history_window_btn = QToolButton()
+         self.history_window_btn.setToolTip("Ventana de historial")
+         self.history_window_btn.setIcon(self.style().standardIcon(QStyle.SP_TitleBarMaxButton))
+         self.history_window_btn.setEnabled(False)
+         for btn in (self.history_open_btn, self.history_fua_btn, self.history_window_btn):
+             btn.setToolButtonStyle(Qt.ToolButtonIconOnly)
+         history_toolbar_layout.addWidget(self.history_open_btn)
+         history_toolbar_layout.addWidget(self.history_fua_btn)
+         history_toolbar_layout.addWidget(self.history_window_btn)
+         history_toolbar_layout.addStretch()
+         history_tab_layout.addLayout(history_toolbar_layout)
+ 
+         self.history_tab = history_tab
++        self.history_alerts_bar = QFrame()
++        self.history_alerts_bar.setObjectName("HistoryAlertsBar")
++        alerts_bar_layout = QHBoxLayout(self.history_alerts_bar)
++        alerts_bar_layout.setContentsMargins(12, 6, 12, 6)
++        alerts_bar_layout.setSpacing(10)
++        alerts_bar_label = QLabel("Alertas clínicas:")
++        alerts_bar_label.setStyleSheet("font-weight: 700; color: #1f2d3d;")
++        alerts_bar_layout.addWidget(alerts_bar_label)
++        self.history_alerts_bar_scroll = QScrollArea()
++        self.history_alerts_bar_scroll.setFrameShape(QFrame.NoFrame)
++        self.history_alerts_bar_scroll.setWidgetResizable(True)
++        self.history_alerts_bar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
++        self.history_alerts_bar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
++        self.history_alerts_bar_container = QWidget()
++        self.history_alerts_bar_layout = QHBoxLayout(self.history_alerts_bar_container)
++        self.history_alerts_bar_layout.setContentsMargins(0, 0, 0, 0)
++        self.history_alerts_bar_layout.setSpacing(6)
++        self.history_alerts_bar_scroll.setWidget(self.history_alerts_bar_container)
++        alerts_bar_layout.addWidget(self.history_alerts_bar_scroll, 1)
++        self.history_alerts_bar.setVisible(False)
+         history_workspace = QWidget()
+         self.history_workspace = history_workspace
+         self.history_workspace_layout = QGridLayout(history_workspace)
+         self.history_workspace_layout.setContentsMargins(0, 0, 0, 0)
+         self.history_workspace_layout.setSpacing(8)
+ 
+         self.history_orders_panel = QGroupBox("Historial de órdenes")
+         orders_layout = QVBoxLayout(self.history_orders_panel)
+         orders_layout.setSpacing(4)
+         history_search_layout = QHBoxLayout()
+         history_search_layout.addWidget(QLabel("DNI:"))
+         self.history_doc_input = QLineEdit()
+         self.history_doc_input.setPlaceholderText("Ingrese DNI")
+         history_search_layout.addWidget(self.history_doc_input)
+         history_search_layout.addWidget(QLabel("Apellidos:"))
+         self.history_lastname_input = QLineEdit()
+         self.history_lastname_input.setPlaceholderText("Ej. PEREZ / PEREZ GARCIA")
+         history_search_layout.addWidget(self.history_lastname_input)
+         self.history_search_btn = QToolButton()
+         self.history_search_btn.setToolTip("Buscar")
+         self.history_search_btn.setIcon(self.style().standardIcon(QStyle.SP_FileDialogContentsView))
+         history_search_layout.addWidget(self.history_search_btn)
+         history_search_layout.addStretch()
+         orders_layout.addLayout(history_search_layout)
+         history_headers = [
+@@ -6405,95 +6425,87 @@ class MainWindow(QMainWindow):
+     def _clear_history_table(self):
+         if hasattr(self, 'history_table'):
+             self.history_table.setRowCount(0)
+         self._history_results = []
+         if hasattr(self, 'history_open_btn'):
+             self.history_open_btn.setEnabled(False)
+         if hasattr(self, 'history_window_btn'):
+             self.history_window_btn.setEnabled(False)
+         self._render_history_preview(None)
+ 
+     def _clear_layout(self, layout):
+         if not layout:
+             return
+         while layout.count():
+             item = layout.takeAt(0)
+             widget = item.widget()
+             if widget:
+                 widget.setParent(None)
+ 
+     def _update_history_workspace_layout(self):
+         if not hasattr(self, 'history_tab') or not hasattr(self, 'history_workspace_layout'):
+             return
+         width = self.history_tab.width()
+         has_alerts = bool(getattr(self, 'history_has_alerts', False))
+         if width < 980:
++            if hasattr(self, 'history_alerts_bar'):
++                self.history_alerts_bar.hide()
+             self.history_workspace.hide()
+             self.history_mobile_toolbox.show()
+             self._clear_layout(self.history_workspace_layout)
+             while self.history_mobile_toolbox.count() > 0:
+                 widget = self.history_mobile_toolbox.widget(0)
+                 self.history_mobile_toolbox.removeItem(0)
+                 if widget:
+                     widget.setParent(None)
+             self.history_mobile_toolbox.addItem(self.history_orders_panel, "Historial")
+             self.history_mobile_toolbox.addItem(self.history_patient_panel, "Paciente")
+             if has_alerts:
+                 self.history_mobile_toolbox.addItem(self.history_alerts_panel, "Alertas")
+             self.history_mobile_toolbox.addItem(self.history_detail_panel, "Detalle de orden")
+             return
+         self.history_mobile_toolbox.hide()
+         self.history_workspace.show()
+         while self.history_mobile_toolbox.count() > 0:
+             widget = self.history_mobile_toolbox.widget(0)
+             self.history_mobile_toolbox.removeItem(0)
+             if widget:
+                 widget.setParent(None)
+         self._clear_layout(self.history_workspace_layout)
+-        show_alerts_column = width >= 1400 and has_alerts
+-        column_count = 4 if show_alerts_column else 3
+-        if column_count == 4:
+-            self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
+-            self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
+-            self.history_workspace_layout.addWidget(self.history_alerts_panel, 0, 2)
+-            self.history_workspace_layout.addWidget(self.history_detail_panel, 0, 3)
+-            self.history_workspace_layout.setColumnStretch(0, 4)
+-            self.history_workspace_layout.setColumnStretch(1, 4)
+-            self.history_workspace_layout.setColumnStretch(2, 2)
+-            self.history_workspace_layout.setColumnStretch(3, 5)
+-        else:
+-            self._clear_layout(self.history_combined_layout)
+-            if has_alerts:
+-                self.history_combined_layout.addWidget(self.history_alerts_panel)
+-            self.history_combined_layout.addWidget(self.history_detail_panel)
+-            self.history_workspace_layout.addWidget(self.history_orders_panel, 0, 0)
+-            self.history_workspace_layout.addWidget(self.history_patient_panel, 0, 1)
+-            self.history_workspace_layout.addWidget(self.history_combined_panel, 0, 2)
+-            self.history_workspace_layout.setColumnStretch(0, 4)
+-            self.history_workspace_layout.setColumnStretch(1, 4)
+-            self.history_workspace_layout.setColumnStretch(2, 5)
+-        self.history_workspace_layout.setRowStretch(0, 1)
++        row_offset = 1 if has_alerts else 0
++        if has_alerts and hasattr(self, 'history_alerts_bar'):
++            self.history_alerts_bar.show()
++            self.history_workspace_layout.addWidget(self.history_alerts_bar, 0, 1, 1, 2)
++        elif hasattr(self, 'history_alerts_bar'):
++            self.history_alerts_bar.hide()
++        self.history_workspace_layout.addWidget(self.history_orders_panel, row_offset, 0)
++        self.history_workspace_layout.addWidget(self.history_patient_panel, row_offset, 1)
++        self.history_workspace_layout.addWidget(self.history_detail_panel, row_offset, 2)
++        self.history_workspace_layout.setColumnStretch(0, 4)
++        self.history_workspace_layout.setColumnStretch(1, 4)
++        self.history_workspace_layout.setColumnStretch(2, 5)
++        self.history_workspace_layout.setRowStretch(row_offset, 1)
+ 
+     def _get_selected_history_entry(self):
+         if not hasattr(self, 'history_table'):
+             return None
+         selection = self.history_table.selectionModel()
+         if not selection or not selection.selectedRows():
+             return None
+         row = selection.selectedRows()[0].row()
+         history_items = getattr(self, '_history_results', [])
+         return history_items[row] if 0 <= row < len(history_items) else None
+ 
+     def _render_history_preview(self, entry):
+         if not hasattr(self, 'history_patient_summary_label'):
+             return
+         if not entry:
+             self.history_patient_summary_label.setText(
+                 "<p style='color:#666;'>Seleccione una orden para ver los datos del paciente.</p>"
+             )
+             self._render_history_alerts([])
+             self._render_history_detail([])
+             return
+         self._render_history_patient_summary(entry)
+         self._render_history_alerts(self._extract_history_alert_tags(entry))
+         self._render_history_detail(entry)
+ 
+@@ -6664,85 +6676,100 @@ class MainWindow(QMainWindow):
+         if "anticoag" in combined:
+             tags.append("Anticoagulación")
+         has_critical = any(detail.get("is_critical") for detail in entry.get("test_details", []) or [])
+         if "crit" in combined or has_critical:
+             tags.append("Resultados críticos recientes")
+         if "repetir" in combined:
+             tags.append("Repetir muestra")
+         pending_tests = entry.get("pending_tests") or []
+         if pending_tests:
+             tags.append("Exámenes pendientes hoy")
+         deduped = []
+         for tag in tags:
+             if tag not in deduped:
+                 deduped.append(tag)
+         return deduped
+ 
+     def _render_history_alerts(self, tags):
+         if not hasattr(self, 'history_alerts_grid'):
+             return
+         prev_state = bool(getattr(self, 'history_has_alerts', False))
+         while self.history_alerts_grid.count():
+             item = self.history_alerts_grid.takeAt(0)
+             widget = item.widget()
+             if widget:
+                 widget.deleteLater()
++        if hasattr(self, 'history_alerts_bar_layout'):
++            self._clear_layout(self.history_alerts_bar_layout)
+         has_alerts = bool(tags)
+         self.history_alerts_placeholder.setVisible(False)
+         if not has_alerts:
+             self.history_has_alerts = False
+             if hasattr(self, 'history_alerts_panel'):
+                 self.history_alerts_panel.setVisible(False)
++            if hasattr(self, 'history_alerts_bar'):
++                self.history_alerts_bar.setVisible(False)
+             if prev_state != has_alerts:
+                 self._update_history_workspace_layout()
+             return
+         self.history_has_alerts = True
+         if hasattr(self, 'history_alerts_panel'):
+             self.history_alerts_panel.setVisible(True)
++        if hasattr(self, 'history_alerts_bar'):
++            self.history_alerts_bar.setVisible(True)
+         color_map = {
+             "Alergias": ("#ffe7cc", "#8a4b08"),
+             "VIH reactivo previo": ("#ffd6d6", "#a12626"),
+             "TB previa": ("#ffd6d6", "#a12626"),
+             "Resultados críticos recientes": ("#ffd6d6", "#a12626"),
+             "Anticoagulación": ("#fff1cc", "#7a4d00"),
+             "HTA": ("#fff1cc", "#7a4d00"),
+             "DM": ("#fff1cc", "#7a4d00"),
+             "Embarazo": ("#e8e1ff", "#4b2e83"),
+             "Repetir muestra": ("#ffe7cc", "#8a4b08"),
+             "Dx crónico": ("#e7f3ff", "#1f4e79"),
+             "Exámenes pendientes hoy": ("#ffe7cc", "#8a4b08"),
+         }
+         for idx, tag in enumerate(tags):
+             bg, fg = color_map.get(tag, ("#e7f3ff", "#1f4e79"))
+             chip = QLabel(tag)
+             chip.setStyleSheet(
+                 f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 3px 8px; }}"
+             )
+             chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+             row = idx
+             col = 0
+             self.history_alerts_grid.addWidget(chip, row, col, Qt.AlignLeft)
++            if hasattr(self, 'history_alerts_bar_layout'):
++                bar_chip = QLabel(tag)
++                bar_chip.setStyleSheet(
++                    f"QLabel {{ background-color: {bg}; color: {fg}; border-radius: 8px; padding: 3px 8px; }}"
++                )
++                bar_chip.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
++                self.history_alerts_bar_layout.addWidget(bar_chip)
++        if hasattr(self, 'history_alerts_bar_layout'):
++            self.history_alerts_bar_layout.addStretch()
+         if prev_state != has_alerts:
+             self._update_history_workspace_layout()
+ 
+     def _render_history_detail(self, entry):
+         if not hasattr(self, 'history_detail_tree'):
+             return
+         self.history_detail_tree.clear()
+         self.history_detail_empty.setText("Sin exámenes registrados en esta orden.")
+         detail_items = []
+         if isinstance(entry, dict):
+             detail_items = entry.get("test_details", [])
+         if not detail_items:
+             self.history_detail_tree.hide()
+             self.history_detail_empty.show()
+             return
+         age_years = None
+         age_value = entry.get("age") if isinstance(entry, dict) else None
+         if age_value not in (None, "", "-"):
+             try:
+                 age_years = int(age_value)
+             except (TypeError, ValueError):
+                 age_years = None
+         detail_context = {
+             "patient": {"sex": entry.get("sex") if isinstance(entry, dict) else None, "birth_date": entry.get("birth_date") if isinstance(entry, dict) else None},
+             "order": {"age_years": age_years}
+@@ -6798,83 +6825,91 @@ class MainWindow(QMainWindow):
+                 if isinstance(value, str):
+                     stripped = value.strip()
+                     if stripped == "":
+                         continue
+                     display_value = " ".join(value.splitlines()).strip()
+                 else:
+                     if self._is_blank_result(value):
+                         continue
+                     display_value = value
+                 unit = field_def.get("unit")
+                 field_type = field_def.get("type")
+                 if unit and field_type not in ("bool", "text_area", "choice"):
+                     display_text = str(display_value)
+                     if not display_text.endswith(unit):
+                         display_value = f"{display_text} {unit}"
+                 label = field_def.get("label", key)
+                 if current_section:
+                     label = f"{current_section}: {label}"
+                 rows.append({"param": label, "result": f"{display_value}"})
+             return rows
+ 
+         def build_result_display(detail_item, test_name):
+             raw_result = detail_item.get("raw_result")
+             observation = detail_item.get("observation")
+             issue = detail_item.get("issue")
++            summary_text = detail_item.get("summary_text")
++            summary_items = detail_item.get("summary_items") or []
++            if summary_text:
++                return str(summary_text)
++            if summary_items:
++                return "; ".join(str(item) for item in summary_items if item)
+             if self._is_blank_result(raw_result):
+                 fallback_text = (observation or issue or "").strip()
+                 return fallback_text if fallback_text else "Resultado no registrado"
+             parsed = self._parse_stored_result(raw_result)
+             if parsed.get("type") == "structured":
+                 template = resolve_template(parsed, test_name)
+                 if template:
+                     rows = build_structured_values(parsed, template)
+                     if rows:
+                         return " | ".join(f"{row['param']}: {row['result']}" for row in rows)
+                 structured_text = self._structured_dict_to_text(parsed.get("values", {}))
+                 if structured_text:
+                     return structured_text
+             text_value = parsed.get("value", raw_result or "")
+             if isinstance(text_value, str):
+                 text_value = text_value.strip()
+             if text_value:
+                 return str(text_value)
+             fallback_text = (observation or issue or "").strip()
+             return fallback_text if fallback_text else "Resultado no registrado"
+ 
+         def build_parameter_rows(detail_item, test_name):
+             raw_result = detail_item.get("raw_result")
+             observation = detail_item.get("observation")
+             issue = detail_item.get("issue")
+             cancel_reason = detail_item.get("cancel_reason")
+             parsed = self._parse_stored_result(raw_result)
+             template = resolve_template(parsed, test_name)
+             rows = []
+             if parsed.get("type") == "structured" and template:
+                 rows = build_structured_values(parsed, template)
+             if not rows:
+                 summary_text = build_result_display(detail_item, test_name)
++                if isinstance(summary_text, str) and summary_text.strip() == "":
++                    summary_text = "Resultado no registrado"
+                 rows.append({"param": "Resultado", "result": summary_text})
+             if issue:
+                 rows.append({"param": "Notas", "result": issue})
+             if cancel_reason:
+                 rows.append({"param": "Motivo de anulación", "result": cancel_reason})
+             if observation:
+                 rows.append({"param": "Observaciones", "result": observation})
+             return rows
+ 
+         for section_key, section_label in sections.items():
+             items = grouped.get(section_key, [])
+             if not items:
+                 continue
+             any_rows = True
+             section_item = QTreeWidgetItem([section_label, "", ""])
+             section_item.setData(0, Qt.UserRole, "section")
+             section_font = section_item.font(0)
+             section_font.setBold(True)
+             section_item.setFont(0, section_font)
+             section_item.setFirstColumnSpanned(True)
+             self.history_detail_tree.addTopLevelItem(section_item)
+             for detail in items:
+                 test_name = detail.get("test") or "—"
+                 display_name = test_name
+                 parameter_rows = build_parameter_rows(detail, test_name)
+ 
+EOF
+)
