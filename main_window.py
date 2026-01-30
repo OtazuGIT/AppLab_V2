@@ -15,7 +15,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QVBoxLay
                              QSpinBox, QInputDialog, QAbstractItemView, QGridLayout, QToolButton, QFrame, QSizePolicy,
                              QTreeWidget, QTreeWidgetItem, QStyle, QToolBox)
 from PyQt5.QtCore import QDate, QDateTime, Qt, QTimer
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtGui import QColor, QFont, QBrush
 from fpdf import FPDF  # Asegúrese de tener fpdf instalado (pip install fpdf)
 from openpyxl import Workbook
 
@@ -3432,8 +3432,6 @@ class MainWindow(QMainWindow):
                     summary_items = [result_value.strip()]
                 elif not self._is_blank_result(result_value):
                     summary_items = [str(result_value)]
-            if not summary_items and not sample_received:
-                continue
             order_id = record.get("order_id")
             if order_id is None:
                 continue
@@ -3492,6 +3490,10 @@ class MainWindow(QMainWindow):
                     "summary_items": [],
                     "has_result": False,
                     "sample_received": False,
+                    "sample_status": None,
+                    "is_cancelled": False,
+                    "cancel_reason": None,
+                    "is_emitted": False,
                     "issue": None,
                     "is_critical": False
                 })
@@ -3499,6 +3501,10 @@ class MainWindow(QMainWindow):
                     detail_entry["summary_items"] = summary_items
                 detail_entry["has_result"] = detail_entry["has_result"] or has_result
                 detail_entry["sample_received"] = detail_entry["sample_received"] or sample_received
+                detail_entry["sample_status"] = record.get("sample_status") or detail_entry.get("sample_status")
+                detail_entry["is_cancelled"] = detail_entry.get("is_cancelled") or bool(record.get("is_cancelled"))
+                detail_entry["cancel_reason"] = record.get("cancel_reason") or detail_entry.get("cancel_reason")
+                detail_entry["is_emitted"] = detail_entry.get("is_emitted") or bool(record.get("emitted"))
                 detail_entry["issue"] = record.get("sample_issue") or detail_entry.get("issue")
                 detail_entry["is_critical"] = detail_entry["is_critical"] or bool(record.get("is_critical"))
                 detail_map[test_clean] = detail_entry
@@ -3519,7 +3525,7 @@ class MainWindow(QMainWindow):
                     entry["groups"].setdefault("others", []).append(f"Obs: {obs_clean}")
             if "test_detail_map" in entry:
                 entry["test_details"] = list(entry["test_detail_map"].values())
-            if any(entry["groups"].get(key) for key in group_keys) or entry.get("pending_tests"):
+            if entry.get("test_detail_map"):
                 aggregated.append(entry)
         return aggregated
 
@@ -5116,27 +5122,7 @@ class MainWindow(QMainWindow):
 
         self.history_detail_panel = QGroupBox("Detalle de la orden / Exámenes")
         detail_layout = QVBoxLayout(self.history_detail_panel)
-        detail_toolbar = QHBoxLayout()
-        detail_toolbar.addWidget(QLabel("Filtros:"))
-        self.history_detail_filter_group = QButtonGroup(self)
-        self.history_detail_filter_group.setExclusive(True)
-        self.history_filter_done_btn = QToolButton()
-        self.history_filter_done_btn.setText("Todos realizados")
-        self.history_filter_done_btn.setCheckable(True)
-        self.history_filter_done_btn.setChecked(True)
-        self.history_filter_pending_btn = QToolButton()
-        self.history_filter_pending_btn.setText("Pendientes con muestra")
-        self.history_filter_pending_btn.setCheckable(True)
-        self.history_filter_critical_btn = QToolButton()
-        self.history_filter_critical_btn.setText("Críticos")
-        self.history_filter_critical_btn.setCheckable(True)
-        for btn in (self.history_filter_done_btn, self.history_filter_pending_btn, self.history_filter_critical_btn):
-            btn.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            self.history_detail_filter_group.addButton(btn)
-            detail_toolbar.addWidget(btn)
-        detail_toolbar.addStretch()
-        detail_layout.addLayout(detail_toolbar)
-        self.history_detail_empty = QLabel("Sin exámenes realizados/recibidos en esta orden.")
+        self.history_detail_empty = QLabel("Sin exámenes registrados en esta orden.")
         self.history_detail_empty.setAlignment(Qt.AlignCenter)
         self.history_detail_empty.setStyleSheet("color: #666; padding: 12px;")
         self.history_detail_tree = QTreeWidget()
@@ -5189,7 +5175,6 @@ class MainWindow(QMainWindow):
         self.history_table.itemSelectionChanged.connect(self._on_history_selection_changed)
         self.history_fua_btn.clicked.connect(self.edit_history_fua)
         self.history_window_btn.clicked.connect(self.open_history_window)
-        self.history_detail_filter_group.buttonClicked.connect(self._update_history_detail_from_selection)
         if hasattr(self, 'history_tab'):
             def _history_tab_resize(event):
                 QWidget.resizeEvent(self.history_tab, event)
@@ -6304,11 +6289,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, 'history_detail_tree'):
             return
         self.history_detail_tree.clear()
-        filter_mode = "done"
-        if hasattr(self, 'history_filter_pending_btn') and self.history_filter_pending_btn.isChecked():
-            filter_mode = "pending"
-        elif hasattr(self, 'history_filter_critical_btn') and self.history_filter_critical_btn.isChecked():
-            filter_mode = "critical"
+        self.history_detail_empty.setText("Sin exámenes registrados en esta orden.")
         detail_items = []
         if isinstance(entry, dict):
             detail_items = entry.get("test_details", [])
@@ -6316,62 +6297,98 @@ class MainWindow(QMainWindow):
             self.history_detail_tree.hide()
             self.history_detail_empty.show()
             return
-        grouped = OrderedDict()
         group_labels = OrderedDict([
             ("hematology", "Hematología"),
             ("biochemistry", "Bioquímica"),
             ("micro_parasito", "Micro/Parasitología"),
             ("others", "Otros exámenes"),
         ])
+        sections = OrderedDict([
+            ("results", "Resultados disponibles"),
+            ("in_process", "En proceso"),
+            ("pending", "Pendientes"),
+            ("no_processed", "No procesados"),
+        ])
+        grouped = {key: OrderedDict() for key in sections}
+        order_emitted = bool(entry.get("emitted")) if isinstance(entry, dict) else False
         for item in detail_items:
-            if filter_mode == "done" and not item.get("has_result"):
-                continue
-            if filter_mode == "pending" and (item.get("has_result") or not item.get("sample_received")):
-                continue
-            if filter_mode == "critical" and not item.get("is_critical"):
-                continue
+            sample_status = (item.get("sample_status") or "").strip().lower()
+            is_cancelled = bool(item.get("is_cancelled")) or sample_status == "anulado"
+            is_rejected = sample_status == "rechazada"
+            has_result = bool(item.get("has_result"))
+            is_emitted = bool(item.get("is_emitted")) or order_emitted or sample_status in {"emitido", "validado"}
+            if is_cancelled or is_rejected:
+                section_key = "no_processed"
+            elif has_result or is_emitted:
+                section_key = "results"
+            elif item.get("sample_received"):
+                section_key = "in_process"
+            else:
+                section_key = "pending"
             group_key = item.get("group") or "others"
-            grouped.setdefault(group_key, []).append(item)
+            grouped[section_key].setdefault(group_key, []).append(item)
         any_rows = False
-        for group_key, group_label in group_labels.items():
-            items = grouped.get(group_key, [])
-            if not items:
+        muted_brush = QBrush(QColor("#888"))
+        for section_key, section_label in sections.items():
+            section_groups = grouped.get(section_key, {})
+            if not any(section_groups.values()):
                 continue
             any_rows = True
-            group_item = QTreeWidgetItem([group_label, ""])
-            group_font = group_item.font(0)
-            group_font.setBold(True)
-            group_item.setFont(0, group_font)
-            self.history_detail_tree.addTopLevelItem(group_item)
-            for detail in items:
-                status_parts = []
-                if detail.get("has_result"):
-                    summary_items = detail.get("summary_items") or []
-                    if summary_items:
-                        status_parts.append("; ".join(summary_items))
+            section_item = QTreeWidgetItem([section_label, ""])
+            section_font = section_item.font(0)
+            section_font.setBold(True)
+            section_item.setFont(0, section_font)
+            self.history_detail_tree.addTopLevelItem(section_item)
+            for group_key, group_label in group_labels.items():
+                items = section_groups.get(group_key, [])
+                if not items:
+                    continue
+                group_item = QTreeWidgetItem([group_label, ""])
+                group_font = group_item.font(0)
+                group_font.setBold(True)
+                group_item.setFont(0, group_font)
+                section_item.addChild(group_item)
+                for detail in items:
+                    status_parts = []
+                    sample_status = (detail.get("sample_status") or "").strip().lower()
+                    is_cancelled = bool(detail.get("is_cancelled")) or sample_status == "anulado"
+                    is_rejected = sample_status == "rechazada"
+                    if is_cancelled:
+                        status_parts.append("Anulado")
+                        cancel_reason = detail.get("cancel_reason")
+                        if cancel_reason:
+                            status_parts.append(str(cancel_reason))
+                    elif is_rejected:
+                        status_parts.append("Rechazado")
+                    if detail.get("has_result"):
+                        summary_items = detail.get("summary_items") or []
+                        if summary_items:
+                            status_parts.append("; ".join(summary_items))
+                        else:
+                            status_parts.append("Resultado registrado")
+                    elif detail.get("is_emitted") or order_emitted or sample_status in {"emitido", "validado"}:
+                        status_parts.append("Emitido")
+                    elif detail.get("sample_received"):
+                        status_parts.append("Muestra recibida (en proceso)")
                     else:
-                        status_parts.append("Resultado registrado")
-                elif detail.get("sample_received"):
-                    status_parts.append("Recibida (pendiente resultado)")
-                issue = detail.get("issue")
-                if issue and not detail.get("has_result"):
-                    status_parts.append(str(issue))
-                status_text = " · ".join(status_parts) if status_parts else "—"
-                test_item = QTreeWidgetItem([detail.get("test") or "—", status_text])
-                group_item.addChild(test_item)
-            group_item.setExpanded(True)
-        if not any_rows:
-            if filter_mode == "critical":
-                self.history_detail_empty.setText("Sin resultados críticos en esta orden.")
-            elif filter_mode == "pending":
-                self.history_detail_empty.setText("No hay exámenes con muestra recibida pendiente.")
-            else:
-                self.history_detail_empty.setText("Sin exámenes realizados/recibidos en esta orden.")
-            self.history_detail_tree.hide()
-            self.history_detail_empty.show()
-        else:
+                        status_parts.append("Pendiente (sin muestra)")
+                    issue = detail.get("issue")
+                    if issue and not detail.get("has_result") and not is_cancelled:
+                        status_parts.append(str(issue))
+                    status_text = " · ".join(status_parts) if status_parts else "—"
+                    test_item = QTreeWidgetItem([detail.get("test") or "—", status_text])
+                    if section_key == "no_processed":
+                        test_item.setForeground(0, muted_brush)
+                        test_item.setForeground(1, muted_brush)
+                    group_item.addChild(test_item)
+                group_item.setExpanded(True)
+            section_item.setExpanded(True)
+        if any_rows:
             self.history_detail_tree.show()
             self.history_detail_empty.hide()
+        else:
+            self.history_detail_tree.hide()
+            self.history_detail_empty.show()
 
     def _update_history_detail_from_selection(self):
         entry = self._get_selected_history_entry()
@@ -6467,7 +6484,9 @@ class MainWindow(QMainWindow):
                 sample_issue,
                 observation,
                 pending_since,
-                entry_id
+                entry_id,
+                deleted,
+                deleted_reason
             ) = row
             display_date = self._format_date_display(sample_date_str, "-")
             if display_date == "-":
@@ -6481,9 +6500,7 @@ class MainWindow(QMainWindow):
             }
             summary_items = self._build_registry_summary(test_name, raw_result, context=context)
             sample_received = self._is_sample_received_status(sample_status)
-            has_result = bool(summary_items)
-            if not summary_items and not sample_received:
-                continue
+            has_result = bool(summary_items) or not self._is_blank_result(raw_result)
             if not summary_items and sample_received:
                 summary_items = [f"{test_name}: Recibida (pendiente resultado)"]
             result_text = "; ".join(summary_items)
@@ -6526,7 +6543,9 @@ class MainWindow(QMainWindow):
                 "sample_status": sample_status,
                 "sample_issue": sample_issue,
                 "observation": observation,
-                "pending_since": pending_since
+                "pending_since": pending_since,
+                "is_cancelled": bool(deleted),
+                "cancel_reason": deleted_reason
             })
         aggregated = self._aggregate_results_by_order(records)
         self._history_results = aggregated
@@ -6535,7 +6554,7 @@ class MainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Sin resultados",
-                "No se encontró historial con exámenes realizados o muestras recibidas para los filtros ingresados."
+                "No se encontró historial con exámenes registrados para los filtros ingresados."
             )
             self._render_history_preview(None)
         else:

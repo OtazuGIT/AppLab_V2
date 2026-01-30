@@ -981,7 +981,7 @@ class LabDB:
         if not doc_number and not last_name:
             return []
         params = []
-        conditions = ["(o.deleted IS NULL OR o.deleted=0)", "(ot.deleted IS NULL OR ot.deleted=0)"]
+        conditions = ["(o.deleted IS NULL OR o.deleted=0)"]
         if doc_number:
             conditions.append("p.doc_number = ?")
             params.append(doc_number)
@@ -998,7 +998,8 @@ class LabDB:
                    p.sex, p.birth_date, p.hcl, p.origin, p.height, p.weight, p.blood_pressure,
                    p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
                    o.age_years, o.observations, o.requested_by, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
-                   ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id
+                   ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id,
+                   ot.deleted, ot.deleted_reason
             FROM orders o
             JOIN patients p ON o.patient_id = p.id
             JOIN order_tests ot ON ot.order_id = o.id
