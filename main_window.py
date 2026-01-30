@@ -13,7 +13,7 @@ from PyQt5.QtWidgets import (QMainWindow, QWidget, QLabel, QPushButton, QVBoxLay
                              QLineEdit, QTextEdit, QTableWidget, QTableWidgetItem, QFileDialog, QMessageBox, QCheckBox,
                              QDateEdit, QRadioButton, QButtonGroup, QDialog, QDialogButtonBox, QListWidget, QListWidgetItem,
                              QSpinBox, QInputDialog, QAbstractItemView, QGridLayout, QToolButton, QFrame, QSizePolicy,
-                             QTreeWidget, QTreeWidgetItem, QStyle, QToolBox)
+                             QTreeWidget, QTreeWidgetItem, QStyle, QToolBox, QHeaderView)
 from PyQt5.QtCore import QDate, QDateTime, Qt, QTimer
 from PyQt5.QtGui import QColor, QFont, QBrush
 from fpdf import FPDF  # Asegúrese de tener fpdf instalado (pip install fpdf)
@@ -139,6 +139,33 @@ REGISTRY_ABBREVIATIONS = {
     "levaduras": "Lev",
     "moco": "Moco",
     "consistencia": "Cons"
+}
+
+EXAM_ABBREVIATIONS = {
+    "examen completo de orina": "EGO",
+    "examen general de orina": "EGO",
+    "orina": "EGO",
+    "sedimento urinario": "Sed",
+    "hemoglobina": "HGB",
+    "hematocrito": "Hto",
+    "hemoglobina - hematocrito": "Hb/Hto",
+    "glucosa": "GLU",
+    "glucosa en ayunas": "GLU",
+    "glucosa postprandial": "GLU",
+    "glucosa 2 h postprandial": "GLU",
+    "bhcg": "BHCG",
+    "beta hcg": "BHCG",
+    "prueba de embarazo": "BHCG",
+    "vih": "VIH-R",
+    "vih 1/2": "VIH-R",
+    "hiv": "VIH-R",
+    "bk": "BK",
+    "baciloscopia": "BK",
+    "parasitologia": "PARA",
+    "parasitológico": "PARA",
+    "parasitologico": "PARA",
+    "copro": "PARA",
+    "coproparasitologico": "PARA",
 }
 
 LEUCOCYTE_KEYS = [
@@ -1341,6 +1368,11 @@ class MainWindow(QMainWindow):
                 border: 1px solid #d7e1f0;
                 border-radius: 16px;
             }
+            QFrame#RegistryAlertBar {
+                background-color: #ffffff;
+                border: 1px solid #d7e1f0;
+                border-radius: 12px;
+            }
             QWidget#RegisterButtonBar QPushButton {
                 min-height: 42px;
                 font-size: 14px;
@@ -1444,6 +1476,14 @@ class MainWindow(QMainWindow):
         self._clock_timer.timeout.connect(self._update_clock)
         self._clock_timer.start(1000)
         self._update_clock()
+
+    def apply_window_mode(self):
+        mode_value = self.labdb.get_setting("kiosk_mode", "0")
+        is_kiosk = str(mode_value).strip() in {"1", "true", "True", "yes", "si", "sí"}
+        if is_kiosk:
+            self.showFullScreen()
+        else:
+            self.showMaximized()
     def on_page_changed(self, index):
         current_widget = self.stack.widget(index)
         if current_widget == self.page_resultados:
@@ -1504,6 +1544,51 @@ class MainWindow(QMainWindow):
         page_layout.setContentsMargins(0, 0, 0, 0)
         page_layout.setSpacing(20)
 
+        self.registry_alert_bar = QFrame()
+        self.registry_alert_bar.setObjectName("RegistryAlertBar")
+        alert_layout = QHBoxLayout(self.registry_alert_bar)
+        alert_layout.setContentsMargins(16, 12, 16, 12)
+        alert_layout.setSpacing(10)
+        alert_title = QLabel("Alertas:")
+        alert_title.setStyleSheet("font-weight: 700; color: #1f2d3d;")
+        self.registry_pregnant_badge = QLabel("Gestante")
+        self.registry_pregnant_badge.setStyleSheet(
+            "QLabel { background-color: #e8e1ff; color: #4b2e83; border-radius: 10px; padding: 4px 10px; }"
+        )
+        self.registry_pending_badge = QLabel("Tiene pendientes")
+        self.registry_pending_badge.setStyleSheet(
+            "QLabel { background-color: #ffe7cc; color: #8a4b08; border-radius: 10px; padding: 4px 10px; }"
+        )
+        self.registry_pending_button = QToolButton()
+        self.registry_pending_button.setText("Ver pendientes")
+        self.registry_pending_button.setToolTip("Revisar exámenes pendientes del paciente.")
+        self.registry_pending_button.setEnabled(False)
+        self.registry_pending_button.clicked.connect(self.show_patient_pending_tests)
+        self.registry_pending_button.setStyleSheet(
+            "QToolButton { background-color: transparent; color: #8a4b08; border: 1px solid #f5cba7;"
+            " border-radius: 8px; padding: 4px 10px; font-weight: 600; }"
+            "QToolButton:disabled { color: #b89a75; border-color: #f0d7c1; }"
+        )
+        self.registry_pregnancy_suggestion = QLabel()
+        self.registry_pregnancy_suggestion.setStyleSheet(
+            "QLabel { background-color: #dff6ff; color: #1f4e79; border-radius: 10px; padding: 4px 10px; }"
+        )
+        self.registry_pregnancy_action = QToolButton()
+        self.registry_pregnancy_action.setText("Activar gestación")
+        self.registry_pregnancy_action.setStyleSheet(
+            "QToolButton { background-color: transparent; color: #1f4e79; border: 1px solid #a8c6e5;"
+            " border-radius: 8px; padding: 4px 10px; font-weight: 600; }"
+        )
+        self.registry_pregnancy_action.clicked.connect(self._activate_gestation_from_suggestion)
+        alert_layout.addWidget(alert_title)
+        alert_layout.addWidget(self.registry_pregnant_badge)
+        alert_layout.addWidget(self.registry_pending_badge)
+        alert_layout.addWidget(self.registry_pending_button)
+        alert_layout.addWidget(self.registry_pregnancy_suggestion)
+        alert_layout.addWidget(self.registry_pregnancy_action)
+        alert_layout.addStretch()
+        page_layout.addWidget(self.registry_alert_bar)
+
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -1537,7 +1622,9 @@ class MainWindow(QMainWindow):
         left_row = 0
         right_row = 0
         self.input_doc_type = QComboBox(); self.input_doc_type.addItems(["DNI", "Carnet Ext.", "Pasaporte"])
+        self.input_doc_type.currentIndexChanged.connect(self.update_registry_alerts)
         self.input_doc_number = QLineEdit()
+        self.input_doc_number.textChanged.connect(self.update_registry_alerts)
         btn_search = QPushButton("Buscar"); btn_search.setFixedWidth(60)
         btn_search.clicked.connect(self.autofill_patient)
         doc_hlayout = QHBoxLayout()
@@ -1556,6 +1643,7 @@ class MainWindow(QMainWindow):
         add_form_row(left_row, 0, "F. Nacimiento:", self.input_birth_date); left_row += 1
         self.input_age = QLineEdit()
         self.input_age.setPlaceholderText("Edad estimada")
+        self.input_age.textChanged.connect(self.update_pregnancy_visibility)
         add_form_row(left_row, 0, "Edad:", self.input_age); left_row += 1
         # Sexo como botones exclusivos
         self.sex_male_radio = QRadioButton("Masculino")
@@ -1576,26 +1664,27 @@ class MainWindow(QMainWindow):
         self.insurance_combo = QComboBox()
         self.insurance_combo.addItems(["SIS", "Particular"])
         add_form_row(left_row, 0, "Tipo de seguro:", self.insurance_combo); left_row += 1
-        self.pregnancy_checkbox = QCheckBox("Paciente gestante")
-        self.pregnancy_checkbox.stateChanged.connect(self.on_pregnancy_toggle)
+        self.gestation_combo = QComboBox()
+        self.gestation_combo.addItems(["No", "Sí"])
+        self.gestation_combo.currentIndexChanged.connect(self.on_gestation_toggle)
         self.gestational_weeks_spin = QSpinBox()
         self.gestational_weeks_spin.setRange(0, 45)
         self.gestational_weeks_spin.setSuffix(" sem")
         self.gestational_weeks_spin.setEnabled(False)
-        self.expected_delivery_date = QDateEdit(QDate.currentDate())
-        self.expected_delivery_date.setDisplayFormat("dd/MM/yyyy")
-        self.expected_delivery_date.setCalendarPopup(True)
-        self.expected_delivery_date.setEnabled(False)
+        self.last_menstrual_date = QDateEdit(QDate.currentDate())
+        self.last_menstrual_date.setDisplayFormat("dd/MM/yyyy")
+        self.last_menstrual_date.setCalendarPopup(True)
+        self.last_menstrual_date.setEnabled(False)
         self.pregnancy_container = QWidget()
         pregnancy_layout = QHBoxLayout(self.pregnancy_container)
         pregnancy_layout.setContentsMargins(0, 0, 0, 0)
-        pregnancy_layout.addWidget(self.pregnancy_checkbox)
+        pregnancy_layout.addWidget(self.gestation_combo)
         pregnancy_layout.addSpacing(8)
-        pregnancy_layout.addWidget(QLabel("Edad gestacional:"))
+        pregnancy_layout.addWidget(QLabel("Semanas:"))
         pregnancy_layout.addWidget(self.gestational_weeks_spin)
         pregnancy_layout.addSpacing(8)
-        pregnancy_layout.addWidget(QLabel("FPP:"))
-        pregnancy_layout.addWidget(self.expected_delivery_date)
+        pregnancy_layout.addWidget(QLabel("FUM:"))
+        pregnancy_layout.addWidget(self.last_menstrual_date)
         pregnancy_layout.addStretch()
         add_form_row(left_row, 0, "Gestación:", self.pregnancy_container); left_row += 1
         self.update_pregnancy_visibility()
@@ -1620,6 +1709,7 @@ class MainWindow(QMainWindow):
         self.input_blood_pressure = QLineEdit(); self.input_blood_pressure.setPlaceholderText("ej. 120/80")
         add_form_row(right_row, 1, "Presión Art.:", self.input_blood_pressure); right_row += 1
         self.input_diagnosis = QLineEdit(); self.input_diagnosis.setPlaceholderText("Ej. Síndrome febril")
+        self.input_diagnosis.textChanged.connect(self.update_pregnancy_suggestion)
         add_form_row(right_row, 1, "Diagnóstico presuntivo:", self.input_diagnosis); right_row += 1
         self.input_observations = QLineEdit()
         self.input_observations.setPlaceholderText("Observaciones (laboratorio)")
@@ -1722,6 +1812,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(top_layout)
         layout.addStretch()
         self.update_test_selection_count()
+        self.update_registry_alerts()
         # Botones de acción
         btn_register = QPushButton("Registrar paciente y pruebas")
         btn_new = QPushButton("Registrar nuevo paciente")
@@ -1773,6 +1864,7 @@ class MainWindow(QMainWindow):
             self.test_selection_count_label.setText(f"Pruebas seleccionadas: {count}")
         if hasattr(self, 'clear_tests_button'):
             self.clear_tests_button.setEnabled(count > 0)
+        self.update_pregnancy_suggestion()
 
     def clear_selected_tests(self):
         for cb in getattr(self, 'test_checkboxes', []):
@@ -1788,6 +1880,7 @@ class MainWindow(QMainWindow):
             self.input_age.setText(str(years))
         else:
             self.input_age.clear()
+        self.update_pregnancy_visibility()
     def on_origin_changed(self, index):
         use_other = self.origin_combo.currentText() == "Otros"
         self.input_origin_other.setEnabled(use_other)
@@ -1800,31 +1893,166 @@ class MainWindow(QMainWindow):
             self.sample_date_edit.setEnabled(not use_today)
             if use_today:
                 self.sample_date_edit.setDate(QDate.currentDate())
-    def on_pregnancy_toggle(self, state):
-        is_checked = state == Qt.Checked
+    def on_gestation_toggle(self, index=None):
+        is_checked = False
+        if hasattr(self, 'gestation_combo'):
+            is_checked = self.gestation_combo.currentText().strip().lower() == "sí"
         if hasattr(self, 'gestational_weeks_spin'):
             self.gestational_weeks_spin.setEnabled(is_checked)
             if not is_checked:
                 self.gestational_weeks_spin.setValue(0)
-        if hasattr(self, 'expected_delivery_date'):
-            self.expected_delivery_date.setEnabled(is_checked)
+        if hasattr(self, 'last_menstrual_date'):
+            self.last_menstrual_date.setEnabled(is_checked)
             if not is_checked:
-                self.expected_delivery_date.setDate(QDate.currentDate())
+                self.last_menstrual_date.setDate(QDate.currentDate())
+        self.update_registry_alerts()
+
+    def _get_current_age_years(self):
+        if hasattr(self, 'input_age'):
+            age_text = self.input_age.text().strip()
+            if age_text:
+                try:
+                    return int(age_text)
+                except ValueError:
+                    return None
+        if hasattr(self, 'input_birth_date'):
+            qdate = self.input_birth_date.date()
+            if isinstance(qdate, QDate) and qdate.isValid():
+                return max(0, qdate.daysTo(QDate.currentDate()) // 365)
+        return None
+
+    def _is_pregnancy_candidate(self):
+        is_female = self.sex_female_radio.isChecked() if hasattr(self, 'sex_female_radio') else False
+        if not is_female:
+            return False
+        age_years = self._get_current_age_years()
+        if age_years is None:
+            return True
+        return 10 <= age_years <= 55
 
     def update_pregnancy_visibility(self):
-        is_female = self.sex_female_radio.isChecked() if hasattr(self, 'sex_female_radio') else False
+        is_candidate = self._is_pregnancy_candidate()
         if hasattr(self, 'pregnancy_container'):
-            self.pregnancy_container.setVisible(is_female)
-        if hasattr(self, 'pregnancy_checkbox'):
-            self.pregnancy_checkbox.setEnabled(is_female)
-            if not is_female:
-                self.pregnancy_checkbox.blockSignals(True)
-                self.pregnancy_checkbox.setChecked(False)
-                self.pregnancy_checkbox.blockSignals(False)
-                self.on_pregnancy_toggle(Qt.Unchecked)
-            else:
-                state = Qt.Checked if self.pregnancy_checkbox.isChecked() else Qt.Unchecked
-                self.on_pregnancy_toggle(state)
+            self.pregnancy_container.setVisible(is_candidate)
+        if hasattr(self, 'gestation_combo'):
+            self.gestation_combo.setEnabled(is_candidate)
+            if not is_candidate:
+                self.gestation_combo.blockSignals(True)
+                self.gestation_combo.setCurrentIndex(0)
+                self.gestation_combo.blockSignals(False)
+                self.on_gestation_toggle()
+        self.update_registry_alerts()
+
+    def _is_pregnancy_related_test(self, test_name):
+        if not test_name:
+            return False
+        normalized = self._normalize_text(test_name)
+        keywords = ["bhcg", "hcg", "embarazo", "gestante", "beta"]
+        return any(keyword in normalized for keyword in keywords)
+
+    def update_pregnancy_suggestion(self):
+        if not hasattr(self, 'registry_pregnancy_suggestion'):
+            return
+        suggestion_text = None
+        tests_selected = [cb.text() for cb in getattr(self, 'test_checkboxes', []) if cb.isChecked()]
+        if any(self._is_pregnancy_related_test(name) for name in tests_selected):
+            suggestion_text = "Prueba de embarazo seleccionada"
+        diagnosis = self.input_diagnosis.text().strip().lower() if hasattr(self, 'input_diagnosis') else ""
+        if diagnosis and re.search(r'\b(gestante|embarazad|embarazo|gestaci[oó]n)\b', diagnosis):
+            suggestion_text = "Diagnóstico sugiere gestación"
+        is_pregnant = False
+        if hasattr(self, 'gestation_combo'):
+            is_pregnant = self.gestation_combo.currentText().strip().lower() == "sí"
+        should_show = bool(suggestion_text) and self._is_pregnancy_candidate() and not is_pregnant
+        if should_show:
+            self.registry_pregnancy_suggestion.setText(suggestion_text)
+        self.registry_pregnancy_suggestion.setVisible(should_show)
+        self.registry_pregnancy_action.setVisible(should_show)
+
+    def _activate_gestation_from_suggestion(self):
+        if hasattr(self, 'gestation_combo'):
+            self.gestation_combo.setCurrentText("Sí")
+            self.on_gestation_toggle()
+        self.update_pregnancy_suggestion()
+
+    def update_registry_alerts(self):
+        if not hasattr(self, 'registry_alert_bar'):
+            return
+        is_pregnant = False
+        if hasattr(self, 'gestation_combo'):
+            is_pregnant = self.gestation_combo.currentText().strip().lower() == "sí"
+        self.registry_pregnant_badge.setVisible(is_pregnant)
+        self.update_pregnancy_suggestion()
+        self._update_pending_patient_alert()
+
+    def _update_pending_patient_alert(self):
+        if not hasattr(self, 'registry_pending_badge'):
+            return
+        doc_type = self.input_doc_type.currentText() if hasattr(self, 'input_doc_type') else None
+        doc_number = self.input_doc_number.text().strip() if hasattr(self, 'input_doc_number') else ""
+        pending_rows = []
+        if doc_number:
+            try:
+                pending_rows = self.labdb.get_pending_tests_for_patient(doc_type, doc_number)
+            except Exception:
+                pending_rows = []
+        self._pending_patient_tests = pending_rows
+        has_pending = bool(pending_rows)
+        if hasattr(self, 'registry_pending_badge'):
+            badge_text = "Tiene pendientes"
+            if has_pending:
+                badge_text = f"Tiene pendientes ({len(pending_rows)})"
+            self.registry_pending_badge.setText(badge_text)
+        self.registry_pending_badge.setVisible(has_pending)
+        self.registry_pending_button.setEnabled(has_pending)
+
+    def show_patient_pending_tests(self):
+        rows = getattr(self, '_pending_patient_tests', [])
+        if not rows:
+            QMessageBox.information(self, "Sin pendientes", "El paciente no tiene exámenes pendientes.")
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Pendientes del paciente")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        summary_label = QLabel(f"Pendientes registrados: {len(rows)}")
+        summary_label.setStyleSheet("font-weight: 600; color: #2c3e50;")
+        layout.addWidget(summary_label)
+        table = QTableWidget(len(rows), 5)
+        headers = ["Orden", "Examen", "Pendiente desde", "Motivo", "Fecha orden"]
+        table.setHorizontalHeaderLabels(headers)
+        table.horizontalHeader().setStretchLastSection(True)
+        table.verticalHeader().setVisible(False)
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        table.setSelectionMode(QAbstractItemView.SingleSelection)
+        for row_idx, row in enumerate(rows):
+            order_id, test_name, pending_since, sample_issue, sample_date, order_date = row
+            pending_display = self._format_datetime_display(pending_since, "—") if pending_since else "—"
+            if pending_display == "—" and sample_date:
+                pending_display = self._format_date_display(sample_date, "—")
+            if pending_display == "—" and order_date:
+                pending_display = self._format_datetime_display(order_date, "—")
+            motive = sample_issue.strip() if isinstance(sample_issue, str) else sample_issue or "—"
+            values = [
+                str(order_id),
+                test_name,
+                pending_display,
+                motive,
+                self._format_date_display(order_date, "—")
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem(value)
+                if col == 0:
+                    item.setTextAlignment(Qt.AlignCenter)
+                table.setItem(row_idx, col, item)
+        table.resizeColumnsToContents()
+        layout.addWidget(table)
+        close_btn = QDialogButtonBox(QDialogButtonBox.Close)
+        close_btn.rejected.connect(dialog.reject)
+        layout.addWidget(close_btn)
+        dialog.resize(640, 340)
+        dialog.exec_()
     def get_current_origin(self):
         if self.origin_combo.currentText() == "Otros":
             other = self.input_origin_other.text().strip()
@@ -1892,6 +2120,27 @@ class MainWindow(QMainWindow):
             return parsed.strftime(fmt_out)
         except Exception:
             return str(value)
+
+    def _format_time_display(self, value):
+        if value in (None, ""):
+            return None
+        if isinstance(value, QDateTime):
+            if value.isValid():
+                return value.toString("HH:mm")
+            return None
+        if isinstance(value, datetime.datetime):
+            return value.strftime("%H:%M")
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+            try:
+                parsed = datetime.datetime.strptime(str(value), fmt)
+                return parsed.strftime("%H:%M")
+            except (ValueError, TypeError):
+                continue
+        try:
+            parsed = datetime.datetime.fromisoformat(str(value))
+            return parsed.strftime("%H:%M")
+        except Exception:
+            return None
     def autofill_patient(self):
         doc_type = self.input_doc_type.currentText()
         doc_number = self.input_doc_number.text().strip()
@@ -1924,26 +2173,29 @@ class MainWindow(QMainWindow):
             self.input_weight.setText(self._format_number(weight))
             self.input_blood_pressure.setText(blood_pressure or "")
             preg_flag = bool(is_pregnant) if is_pregnant not in (None, "") else False
-            self.pregnancy_checkbox.blockSignals(True)
-            self.pregnancy_checkbox.setChecked(preg_flag)
-            self.pregnancy_checkbox.blockSignals(False)
-            self.on_pregnancy_toggle(Qt.Checked if preg_flag else Qt.Unchecked)
+            if hasattr(self, 'gestation_combo'):
+                self.gestation_combo.blockSignals(True)
+                self.gestation_combo.setCurrentText("Sí" if preg_flag else "No")
+                self.gestation_combo.blockSignals(False)
+            self.on_gestation_toggle()
             if preg_flag:
                 if gest_age is not None:
                     try:
                         self.gestational_weeks_spin.setValue(int(gest_age))
                     except (TypeError, ValueError):
                         self.gestational_weeks_spin.setValue(0)
-                if expected_delivery:
+                if expected_delivery and hasattr(self, 'last_menstrual_date'):
                     edd = QDate.fromString(expected_delivery, "yyyy-MM-dd")
                     if edd.isValid():
-                        self.expected_delivery_date.setDate(edd)
+                        self.last_menstrual_date.setDate(edd)
                     else:
-                        self.expected_delivery_date.setDate(QDate.currentDate())
+                        self.last_menstrual_date.setDate(QDate.currentDate())
             else:
                 self.gestational_weeks_spin.setValue(0)
-                self.expected_delivery_date.setDate(QDate.currentDate())
+                if hasattr(self, 'last_menstrual_date'):
+                    self.last_menstrual_date.setDate(QDate.currentDate())
             QMessageBox.information(self, "Paciente encontrado", "Datos del paciente cargados.")
+            self.update_registry_alerts()
     def register_patient(self, btn_to_results):
         doc_type = self.input_doc_type.currentText()
         doc_number = self.input_doc_number.text().strip()
@@ -1999,13 +2251,15 @@ class MainWindow(QMainWindow):
             weight_val = float(weight) if weight else None
         except:
             weight_val = None
-        is_pregnant = self.pregnancy_checkbox.isChecked() if hasattr(self, 'pregnancy_checkbox') else False
+        is_pregnant = False
+        if hasattr(self, 'gestation_combo'):
+            is_pregnant = self.gestation_combo.currentText().strip().lower() == "sí"
         gest_age_weeks = None
         if is_pregnant and hasattr(self, 'gestational_weeks_spin'):
             gest_age_weeks = self.gestational_weeks_spin.value()
         expected_delivery_date = None
-        if is_pregnant and hasattr(self, 'expected_delivery_date'):
-            edd_qdate = self.expected_delivery_date.date()
+        if is_pregnant and hasattr(self, 'last_menstrual_date'):
+            edd_qdate = self.last_menstrual_date.date()
             if isinstance(edd_qdate, QDate) and edd_qdate.isValid():
                 expected_delivery_date = edd_qdate.toString("yyyy-MM-dd")
         sample_date = None
@@ -2093,15 +2347,15 @@ class MainWindow(QMainWindow):
         self.input_height.clear(); self.input_weight.clear(); self.input_blood_pressure.clear()
         self.input_diagnosis.clear()
         self.input_observations.setText("N/A")
-        if hasattr(self, 'pregnancy_checkbox'):
-            self.pregnancy_checkbox.blockSignals(True)
-            self.pregnancy_checkbox.setChecked(False)
-            self.pregnancy_checkbox.blockSignals(False)
-            self.on_pregnancy_toggle(Qt.Unchecked)
+        if hasattr(self, 'gestation_combo'):
+            self.gestation_combo.blockSignals(True)
+            self.gestation_combo.setCurrentIndex(0)
+            self.gestation_combo.blockSignals(False)
+            self.on_gestation_toggle()
         if hasattr(self, 'gestational_weeks_spin'):
             self.gestational_weeks_spin.setValue(0)
-        if hasattr(self, 'expected_delivery_date'):
-            self.expected_delivery_date.setDate(QDate.currentDate())
+        if hasattr(self, 'last_menstrual_date'):
+            self.last_menstrual_date.setDate(QDate.currentDate())
         if hasattr(self, 'sample_date_edit'):
             self.sample_date_edit.blockSignals(True)
             self.sample_date_edit.setDate(QDate.currentDate())
@@ -3348,6 +3602,107 @@ class MainWindow(QMainWindow):
             return key
         return ""
 
+    def _abbreviate_exam_name(self, test_name):
+        if not test_name:
+            return "—"
+        normalized = self._normalize_text(test_name)
+        for key, abbr in EXAM_ABBREVIATIONS.items():
+            if key in normalized:
+                return abbr
+        return self._abbreviate_registry_label(test_name)
+
+    def _format_structured_summary_value(self, value, field_def=None):
+        if self._is_blank_result(value):
+            return None
+        display = self._normalize_registry_value(value)
+        if display is None:
+            return None
+        unit = field_def.get("unit") if field_def else None
+        field_type = field_def.get("type") if field_def else None
+        if unit and field_type not in ("bool", "text_area", "choice"):
+            if isinstance(display, (int, float)):
+                display = self._format_decimal(display)
+            display_text = str(display)
+            if not display_text.endswith(unit):
+                display = f"{display_text} {unit}"
+        return display
+
+    def _build_exam_result_summary(self, test_name, raw_result, context=None):
+        parsed = self._parse_stored_result(raw_result)
+        text_value = parsed.get("value", raw_result or "")
+        template_key = parsed.get("template") if isinstance(parsed, dict) else None
+        template = TEST_TEMPLATES.get(template_key) if template_key in TEST_TEMPLATES else TEST_TEMPLATES.get(test_name)
+        normalized_test = self._normalize_text(test_name or "")
+        if parsed.get("type") == "structured" and template:
+            values = parsed.get("values", {})
+            field_map = {field["key"]: field for field in template.get("fields", []) if field.get("key")}
+            def build_from_keys(keys, max_items=5):
+                parts = []
+                for key in keys:
+                    if key not in values:
+                        continue
+                    field_def = field_map.get(key, {})
+                    display = self._format_structured_summary_value(values.get(key), field_def)
+                    if display is None:
+                        continue
+                    label = self._abbreviate_registry_label(field_def.get("label", key), key)
+                    parts.append(f"{label} {display}".strip())
+                    if len(parts) >= max_items:
+                        break
+                return " | ".join(parts) if parts else None
+
+            if "orina" in normalized_test or "ego" in normalized_test:
+                summary = build_from_keys(
+                    ["ph", "densidad", "leucocitos_quimico", "nitritos", "proteinas", "glucosa"],
+                    max_items=5
+                )
+                if summary:
+                    return summary
+            if "parasit" in normalized_test or "copro" in normalized_test:
+                summary = build_from_keys(["parasitos", "quistes", "huevos", "trofozoitos"], max_items=3)
+                if summary:
+                    return summary
+            if "vih" in normalized_test or "hiv" in normalized_test or "rápid" in normalized_test:
+                summary = build_from_keys(["resultado", "interpretacion"], max_items=1)
+                if summary:
+                    return summary.replace("Resultado ", "").replace("Interpretación ", "")
+            if "bhcg" in normalized_test or "embarazo" in normalized_test:
+                summary = build_from_keys(["resultado", "interpretacion"], max_items=1)
+                if summary:
+                    return summary.replace("Resultado ", "").replace("Interpretación ", "")
+            if any(key in normalized_test for key in ["hemograma", "hemoglob", "hematocrit", "leucoc", "plaquet"]):
+                summary = build_from_keys(
+                    ["hemoglobina", "hematocrito", "leucocitos", "plaquetas", "eritrocitos"],
+                    max_items=4
+                )
+                if summary:
+                    return summary
+            value_keys = [field["key"] for field in template.get("fields", []) if field.get("key")]
+            summary = build_from_keys(value_keys, max_items=3)
+            if summary:
+                return summary
+        if isinstance(text_value, str):
+            text_value = text_value.strip()
+        if text_value:
+            return str(text_value)
+        return None
+
+    def _build_exam_detail_text(self, test_name, raw_result, context=None, observation=None, issue=None, cancel_reason=None):
+        lines = self._format_result_lines(test_name, raw_result, context=context)
+        detail_lines = []
+        for line in lines:
+            cleaned = line.strip()
+            if not cleaned:
+                continue
+            detail_lines.append(cleaned)
+        if issue:
+            detail_lines.append(f"Notas: {issue}")
+        if cancel_reason:
+            detail_lines.append(f"Motivo de anulación: {cancel_reason}")
+        if observation:
+            detail_lines.append(f"Observaciones: {observation}")
+        return "\n".join(detail_lines)
+
     def _post_process_registry_pairs(self, pairs):
         if not pairs:
             return []
@@ -3424,6 +3779,7 @@ class MainWindow(QMainWindow):
         grouped = OrderedDict()
         for record in records:
             summary_items = record.get("summary_items") or []
+            summary_text = record.get("summary_text")
             has_result = bool(record.get("has_result"))
             sample_received = bool(record.get("sample_received"))
             if not summary_items and not sample_received:
@@ -3488,6 +3844,7 @@ class MainWindow(QMainWindow):
                     "test": test_clean,
                     "group": group_key,
                     "summary_items": [],
+                    "summary_text": None,
                     "has_result": False,
                     "sample_received": False,
                     "sample_status": None,
@@ -3495,10 +3852,17 @@ class MainWindow(QMainWindow):
                     "cancel_reason": None,
                     "is_emitted": False,
                     "issue": None,
-                    "is_critical": False
+                    "is_critical": False,
+                    "observation": None,
+                    "raw_result": None,
+                    "pending_since": None,
+                    "order_date_raw": None,
+                    "sample_date_raw": None
                 })
                 if summary_items and has_result:
                     detail_entry["summary_items"] = summary_items
+                if summary_text and has_result:
+                    detail_entry["summary_text"] = summary_text
                 detail_entry["has_result"] = detail_entry["has_result"] or has_result
                 detail_entry["sample_received"] = detail_entry["sample_received"] or sample_received
                 detail_entry["sample_status"] = record.get("sample_status") or detail_entry.get("sample_status")
@@ -3507,6 +3871,11 @@ class MainWindow(QMainWindow):
                 detail_entry["is_emitted"] = detail_entry.get("is_emitted") or bool(record.get("emitted"))
                 detail_entry["issue"] = record.get("sample_issue") or detail_entry.get("issue")
                 detail_entry["is_critical"] = detail_entry["is_critical"] or bool(record.get("is_critical"))
+                detail_entry["observation"] = record.get("observation") or detail_entry.get("observation")
+                detail_entry["raw_result"] = record.get("raw_result") or detail_entry.get("raw_result")
+                detail_entry["pending_since"] = record.get("pending_since") or detail_entry.get("pending_since")
+                detail_entry["order_date_raw"] = record.get("order_date_raw") or detail_entry.get("order_date_raw")
+                detail_entry["sample_date_raw"] = record.get("sample_date_raw") or detail_entry.get("sample_date_raw")
                 detail_map[test_clean] = detail_entry
             if sample_received and not has_result and test_name:
                 entry.setdefault("pending_tests", []).append(test_name)
@@ -3622,25 +3991,30 @@ class MainWindow(QMainWindow):
             return normalized in {"1", "true", "t", "si", "s", "y", "yes"}
         return False
 
-    def _format_registry_pregnancy_line(self, entry):
+    def _format_pregnancy_display(self, entry, include_label=False, include_no=False):
         is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
-        if not is_pregnant:
+        if not is_pregnant and not include_no:
             return None
         gest_weeks = entry.get("gestational_age_weeks")
         due_raw = entry.get("expected_delivery_date")
-        display = "Gestante: Sí"
-        if gest_weeks not in (None, "", 0):
+        display = "Sí" if is_pregnant else "No"
+        if is_pregnant and gest_weeks not in (None, "", 0):
             try:
                 display += f" ({int(gest_weeks)} sem)"
             except (TypeError, ValueError):
                 pass
-        if due_raw:
+        if is_pregnant and due_raw:
             due_display = self._format_short_date(due_raw)
             if due_display == "—":
                 due_display = str(due_raw)
             if due_display:
-                display += f" - FPP: {due_display}"
+                display += f" - FUM: {due_display}"
+        if include_label:
+            return f"Gestación: {display}"
         return display
+
+    def _format_registry_pregnancy_line(self, entry):
+        return self._format_pregnancy_display(entry, include_label=True, include_no=False)
 
     def _format_fua_display(self, entry):
         insurance = (entry.get("insurance_type") or "").strip().lower()
@@ -3700,7 +4074,7 @@ class MainWindow(QMainWindow):
         return "\n".join(parts) if parts else "-"
 
     def _format_history_gestation(self, entry):
-        display = self._format_registry_pregnancy_line(entry)
+        display = self._format_pregnancy_display(entry, include_label=False, include_no=True)
         return display if display else "-"
 
     def _build_history_row_values(self, entry):
@@ -4212,7 +4586,7 @@ class MainWindow(QMainWindow):
                 due_display = self._format_short_date(due_raw)
                 if due_display == '—':
                     due_display = due_raw
-                lines.append(f"FPP: {due_display}")
+                lines.append(f"FUM: {due_display}")
         lines.append(f"HISTORIA CLÍNICA: {pat.get('hcl') or '-'}")
         lines.append(f"PROCEDENCIA: {pat.get('origin') or '-'}")
         insurance_display = self._format_insurance_display(ord_inf.get('insurance_type'))
@@ -4366,7 +4740,7 @@ class MainWindow(QMainWindow):
             (("Solicitante", requester_text), ("Fecha de toma de muestra", sample_date_display)),
         ]
         if pregnancy_text:
-            info_pairs.append((("Gestante", pregnancy_text), ("FPP", due_display)))
+            info_pairs.append((("Gestante", pregnancy_text), ("FUM", due_display)))
 
         def draw_patient_info():
             col_width = (pdf.w - pdf.l_margin - pdf.r_margin) / 2
@@ -5126,10 +5500,18 @@ class MainWindow(QMainWindow):
         self.history_detail_empty.setAlignment(Qt.AlignCenter)
         self.history_detail_empty.setStyleSheet("color: #666; padding: 12px;")
         self.history_detail_tree = QTreeWidget()
-        self.history_detail_tree.setHeaderLabels(["Examen", "Estado/Resultado"])
-        self.history_detail_tree.setRootIsDecorated(True)
+        self.history_detail_tree.setHeaderLabels(["Examen", "Resultado principal", "Estado", "Hora"])
+        self.history_detail_tree.setRootIsDecorated(False)
         self.history_detail_tree.setAlternatingRowColors(True)
+        self.history_detail_tree.setItemsExpandable(True)
+        self.history_detail_tree.setUniformRowHeights(False)
+        header = self.history_detail_tree.header()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.history_detail_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.history_detail_tree.itemClicked.connect(self._toggle_history_detail_item)
         detail_layout.addWidget(self.history_detail_empty)
         detail_layout.addWidget(self.history_detail_tree)
 
@@ -5450,10 +5832,10 @@ class MainWindow(QMainWindow):
                 "patient": {"sex": sex, "birth_date": birth_date},
                 "order": {"age_years": age_years}
             }
-            summary_items = self._build_registry_summary(test_name, result, context=context)
-            if not summary_items:
+            summary_text = self._build_exam_result_summary(test_name, result, context=context)
+            if not summary_text:
                 continue
-            result_text = "; ".join(summary_items)
+            result_text = summary_text
             activity_data.append({
                 "entry_id": test_entry_id,
                 "order_id": order_id,
@@ -5475,7 +5857,9 @@ class MainWindow(QMainWindow):
                 "age_years": age_years,
                 "test": test_name,
                 "result": result_text,
-                "summary_items": summary_items,
+                "summary_items": [summary_text],
+                "summary_text": summary_text,
+                "has_result": True,
                 "category": category,
                 "order_observations": order_obs,
                 "insurance_type": insurance_type,
@@ -6162,10 +6546,12 @@ class MainWindow(QMainWindow):
         requested_by = normalize(entry.get("requested_by"))
 
         personal_rows = []
+        pregnancy_display = self._format_pregnancy_display(entry, include_label=False, include_no=True)
         add_row(personal_rows, "Nombre completo", normalize(patient_name))
         add_row(personal_rows, doc_label, doc_number)
         add_row(personal_rows, "Edad", age_display)
         add_row(personal_rows, "Sexo", sex_display)
+        add_row(personal_rows, "Gestación", pregnancy_display)
         add_row(personal_rows, "Procedencia", origin_display)
         add_row(personal_rows, "HCL", hcl_display)
         add_row(personal_rows, "Seguro", insurance_text)
@@ -6187,9 +6573,16 @@ class MainWindow(QMainWindow):
         order_id = normalize(entry.get("order_id"))
         header_parts = [part for part in [f"Orden #{order_id}" if order_id else None, header_date] if part]
         header_text = " · ".join(header_parts) if header_parts else "Resumen clínico"
+        pregnancy_badge = ""
+        if self._normalize_bool(entry.get("is_pregnant")):
+            badge_text = pregnancy_display or "Gestante"
+            pregnancy_badge = (
+                f"<span style='background:#e8e1ff; color:#4b2e83; border-radius:8px; padding:2px 8px;"
+                f" margin-left:8px; font-size:9pt; font-weight:700;'>{esc(badge_text)}</span>"
+            )
 
         html_output = f"""
-        <div style="font-weight:700; font-size:11.2pt; margin-bottom:4px;">{esc(header_text)}</div>
+        <div style="font-weight:700; font-size:11.2pt; margin-bottom:4px;">{esc(header_text)}{pregnancy_badge}</div>
         {section_block("Datos personales", personal_rows)}
         {section_block("Signos vitales", vitals_rows)}
         {section_block("Datos de la orden", order_rows)}
@@ -6297,19 +6690,24 @@ class MainWindow(QMainWindow):
             self.history_detail_tree.hide()
             self.history_detail_empty.show()
             return
-        group_labels = OrderedDict([
-            ("hematology", "Hematología"),
-            ("biochemistry", "Bioquímica"),
-            ("micro_parasito", "Micro/Parasitología"),
-            ("others", "Otros exámenes"),
-        ])
+        age_years = None
+        age_value = entry.get("age") if isinstance(entry, dict) else None
+        if age_value not in (None, "", "-"):
+            try:
+                age_years = int(age_value)
+            except (TypeError, ValueError):
+                age_years = None
+        detail_context = {
+            "patient": {"sex": entry.get("sex") if isinstance(entry, dict) else None, "birth_date": entry.get("birth_date") if isinstance(entry, dict) else None},
+            "order": {"age_years": age_years}
+        }
         sections = OrderedDict([
-            ("results", "Resultados disponibles"),
+            ("results", "Realizado"),
             ("in_process", "En proceso"),
-            ("pending", "Pendientes"),
-            ("no_processed", "No procesados"),
+            ("pending", "Pendiente"),
+            ("cancelled", "Anulado"),
         ])
-        grouped = {key: OrderedDict() for key in sections}
+        grouped = {key: [] for key in sections}
         order_emitted = bool(entry.get("emitted")) if isinstance(entry, dict) else False
         for item in detail_items:
             sample_status = (item.get("sample_status") or "").strip().lower()
@@ -6318,70 +6716,79 @@ class MainWindow(QMainWindow):
             has_result = bool(item.get("has_result"))
             is_emitted = bool(item.get("is_emitted")) or order_emitted or sample_status in {"emitido", "validado"}
             if is_cancelled or is_rejected:
-                section_key = "no_processed"
+                section_key = "cancelled"
             elif has_result or is_emitted:
                 section_key = "results"
             elif item.get("sample_received"):
                 section_key = "in_process"
             else:
                 section_key = "pending"
-            group_key = item.get("group") or "others"
-            grouped[section_key].setdefault(group_key, []).append(item)
+            grouped[section_key].append(item)
         any_rows = False
-        muted_brush = QBrush(QColor("#888"))
         for section_key, section_label in sections.items():
-            section_groups = grouped.get(section_key, {})
-            if not any(section_groups.values()):
+            items = grouped.get(section_key, [])
+            if not items:
                 continue
             any_rows = True
-            section_item = QTreeWidgetItem([section_label, ""])
+            section_item = QTreeWidgetItem([section_label, "", "", ""])
+            section_item.setData(0, Qt.UserRole, "section")
             section_font = section_item.font(0)
             section_font.setBold(True)
             section_item.setFont(0, section_font)
             self.history_detail_tree.addTopLevelItem(section_item)
-            for group_key, group_label in group_labels.items():
-                items = section_groups.get(group_key, [])
-                if not items:
-                    continue
-                group_item = QTreeWidgetItem([group_label, ""])
-                group_font = group_item.font(0)
-                group_font.setBold(True)
-                group_item.setFont(0, group_font)
-                section_item.addChild(group_item)
-                for detail in items:
-                    status_parts = []
-                    sample_status = (detail.get("sample_status") or "").strip().lower()
-                    is_cancelled = bool(detail.get("is_cancelled")) or sample_status == "anulado"
-                    is_rejected = sample_status == "rechazada"
-                    if is_cancelled:
-                        status_parts.append("Anulado")
-                        cancel_reason = detail.get("cancel_reason")
-                        if cancel_reason:
-                            status_parts.append(str(cancel_reason))
-                    elif is_rejected:
-                        status_parts.append("Rechazado")
-                    if detail.get("has_result"):
-                        summary_items = detail.get("summary_items") or []
-                        if summary_items:
-                            status_parts.append("; ".join(summary_items))
-                        else:
-                            status_parts.append("Resultado registrado")
-                    elif detail.get("is_emitted") or order_emitted or sample_status in {"emitido", "validado"}:
-                        status_parts.append("Emitido")
-                    elif detail.get("sample_received"):
-                        status_parts.append("Muestra recibida (en proceso)")
-                    else:
-                        status_parts.append("Pendiente (sin muestra)")
-                    issue = detail.get("issue")
-                    if issue and not detail.get("has_result") and not is_cancelled:
-                        status_parts.append(str(issue))
-                    status_text = " · ".join(status_parts) if status_parts else "—"
-                    test_item = QTreeWidgetItem([detail.get("test") or "—", status_text])
-                    if section_key == "no_processed":
-                        test_item.setForeground(0, muted_brush)
-                        test_item.setForeground(1, muted_brush)
-                    group_item.addChild(test_item)
-                group_item.setExpanded(True)
+            for detail in items:
+                test_name = detail.get("test") or "—"
+                abbr = self._abbreviate_exam_name(test_name)
+                summary_text = detail.get("summary_text")
+                if not summary_text:
+                    summary_items = detail.get("summary_items") or []
+                    if summary_items:
+                        summary_text = summary_items[0]
+                        if ":" in summary_text:
+                            summary_text = summary_text.split(":", 1)[1].strip()
+                if not summary_text:
+                    summary_text = "(sin resultado)"
+                status_label = section_label
+                badge = QLabel(status_label)
+                if section_key == "results":
+                    badge.setStyleSheet("QLabel { background-color: #e6f7ef; color: #1e8449; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                elif section_key == "in_process":
+                    badge.setStyleSheet("QLabel { background-color: #e7f3ff; color: #1f4e79; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                elif section_key == "pending":
+                    badge.setStyleSheet("QLabel { background-color: #fff1cc; color: #7a4d00; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                else:
+                    badge.setStyleSheet("QLabel { background-color: #f0f0f0; color: #7f8c8d; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                time_value = detail.get("pending_since") or detail.get("sample_date_raw") or detail.get("order_date_raw")
+                time_display = self._format_time_display(time_value) or "—"
+                test_item = QTreeWidgetItem([abbr, "", "", time_display])
+                test_item.setData(0, Qt.UserRole, "exam")
+                test_item.setToolTip(0, test_name)
+                summary_label = QLabel(summary_text)
+                summary_label.setWordWrap(True)
+                summary_label.setToolTip(summary_text)
+                summary_label.setStyleSheet("padding: 2px 0;")
+                self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
+                self.history_detail_tree.setItemWidget(test_item, 2, badge)
+                section_item.addChild(test_item)
+                detail_text = self._build_exam_detail_text(
+                    test_name,
+                    detail.get("raw_result"),
+                    context=detail_context,
+                    observation=detail.get("observation"),
+                    issue=detail.get("issue"),
+                    cancel_reason=detail.get("cancel_reason")
+                )
+                if detail_text:
+                    detail_item = QTreeWidgetItem(["", "", "", ""])
+                    detail_item.setData(0, Qt.UserRole, "detail")
+                    detail_item.setFirstColumnSpanned(True)
+                    detail_label = QLabel(html.escape(detail_text).replace("\n", "<br>"))
+                    detail_label.setWordWrap(True)
+                    detail_label.setTextFormat(Qt.RichText)
+                    detail_label.setStyleSheet("color: #444; padding: 6px 8px;")
+                    self.history_detail_tree.setItemWidget(detail_item, 0, detail_label)
+                    test_item.addChild(detail_item)
+                test_item.setExpanded(False)
             section_item.setExpanded(True)
         if any_rows:
             self.history_detail_tree.show()
@@ -6389,6 +6796,11 @@ class MainWindow(QMainWindow):
         else:
             self.history_detail_tree.hide()
             self.history_detail_empty.show()
+
+    def _toggle_history_detail_item(self, item, column):
+        if not item or item.data(0, Qt.UserRole) != "exam":
+            return
+        item.setExpanded(not item.isExpanded())
 
     def _update_history_detail_from_selection(self):
         entry = self._get_selected_history_entry()
@@ -6498,10 +6910,13 @@ class MainWindow(QMainWindow):
                 "patient": {"sex": sex, "birth_date": birth_date},
                 "order": {"age_years": age_years}
             }
-            summary_items = self._build_registry_summary(test_name, raw_result, context=context)
+            summary_text = self._build_exam_result_summary(test_name, raw_result, context=context)
             sample_received = self._is_sample_received_status(sample_status)
-            has_result = bool(summary_items) or not self._is_blank_result(raw_result)
-            if not summary_items and sample_received:
+            has_result = bool(summary_text) or not self._is_blank_result(raw_result)
+            summary_items = []
+            if summary_text:
+                summary_items = [f"{test_name}: {summary_text}"]
+            elif sample_received:
                 summary_items = [f"{test_name}: Recibida (pendiente resultado)"]
             result_text = "; ".join(summary_items)
             records.append({
@@ -6528,6 +6943,8 @@ class MainWindow(QMainWindow):
                 "test": test_name,
                 "result": result_text,
                 "summary_items": summary_items,
+                "summary_text": summary_text,
+                "raw_result": raw_result,
                 "has_result": has_result,
                 "sample_received": sample_received,
                 "is_critical": self._detect_critical_result(raw_result, summary_items),
@@ -6678,6 +7095,12 @@ class MainWindow(QMainWindow):
         btn_save_profile.clicked.connect(self.save_user_profile)
         profile_layout.addRow(btn_save_profile)
         layout.addWidget(profile_group)
+        window_group = QGroupBox("Ventana de la aplicación")
+        window_layout = QVBoxLayout(window_group)
+        self.kiosk_mode_checkbox = QCheckBox("Modo kiosko (pantalla completa)")
+        window_layout.addWidget(self.kiosk_mode_checkbox)
+        self.kiosk_mode_checkbox.stateChanged.connect(self.save_window_settings)
+        layout.addWidget(window_group)
         self._populate_profile_fields()
         info_label = QLabel("Crear nuevo usuario:")
         layout.addWidget(info_label)
@@ -6701,6 +7124,12 @@ class MainWindow(QMainWindow):
         self.profile_full_name_input.setText(self.user.get('full_name', ''))
         self.profile_profession_input.setText(self.user.get('profession', ''))
         self.profile_license_input.setText(self.user.get('license', ''))
+        if hasattr(self, 'kiosk_mode_checkbox'):
+            mode_value = self.labdb.get_setting("kiosk_mode", "0")
+            is_kiosk = str(mode_value).strip() in {"1", "true", "True", "yes", "si", "sí"}
+            self.kiosk_mode_checkbox.blockSignals(True)
+            self.kiosk_mode_checkbox.setChecked(is_kiosk)
+            self.kiosk_mode_checkbox.blockSignals(False)
 
     def save_user_profile(self):
         if not hasattr(self, 'profile_full_name_input'):
@@ -6716,6 +7145,13 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Perfil actualizado", "Los datos del usuario fueron guardados.")
         else:
             QMessageBox.warning(self, "Sin cambios", "No se pudieron actualizar los datos del usuario.")
+
+    def save_window_settings(self):
+        if not hasattr(self, 'kiosk_mode_checkbox'):
+            return
+        is_kiosk = self.kiosk_mode_checkbox.isChecked()
+        self.labdb.set_setting("kiosk_mode", "1" if is_kiosk else "0")
+        self.apply_window_mode()
     def create_user(self):
         username = self.new_user_input.text().strip()
         password = self.new_pass_input.text().strip()

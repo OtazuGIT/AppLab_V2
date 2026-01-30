@@ -116,6 +116,12 @@ class LabDB:
                 FOREIGN KEY(test_id) REFERENCES tests(id)
             )
         """)
+        self.cur.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        """)
         self.conn.commit()
         # Datos iniciales por defecto
         self.cur.execute("SELECT COUNT(*) FROM users")
@@ -141,6 +147,25 @@ class LabDB:
                         )
                     )
                     self.conn.commit()
+
+    def get_setting(self, key, default=None):
+        if not key:
+            return default
+        self.cur.execute("SELECT value FROM app_settings WHERE key=?", (key,))
+        row = self.cur.fetchone()
+        if row and row[0] is not None:
+            return row[0]
+        return default
+
+    def set_setting(self, key, value):
+        if not key:
+            return False
+        self.cur.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+        self.conn.commit()
+        return True
         self.cur.execute("SELECT COUNT(*) FROM tests")
         if self.cur.fetchone()[0] == 0:
             tests_by_category = {
@@ -552,6 +577,29 @@ class LabDB:
                 o.id ASC,
                 t.name ASC
         """)
+        return self.cur.fetchall()
+
+    def get_pending_tests_for_patient(self, doc_type, doc_number):
+        if not doc_type or not doc_number:
+            return []
+        self.cur.execute("""
+            SELECT o.id, t.name, ot.pending_since, ot.sample_issue, o.sample_date, o.date
+            FROM order_tests ot
+            JOIN orders o ON ot.order_id = o.id
+            JOIN patients p ON o.patient_id = p.id
+            JOIN tests t ON ot.test_id = t.id
+            WHERE p.doc_type=?
+              AND p.doc_number=?
+              AND ot.sample_status='pendiente'
+              AND (ot.deleted IS NULL OR ot.deleted=0)
+              AND (o.deleted IS NULL OR o.deleted=0)
+            ORDER BY
+                CASE WHEN ot.pending_since IS NOT NULL THEN datetime(ot.pending_since)
+                     ELSE datetime(o.date)
+                END ASC,
+                o.id ASC,
+                t.name ASC
+        """, (doc_type, doc_number))
         return self.cur.fetchall()
 
     def get_completed_orders(self, include_emitted=False):

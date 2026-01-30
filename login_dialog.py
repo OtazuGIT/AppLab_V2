@@ -19,7 +19,13 @@ class LoginDialog(QDialog):
         self.labdb = labdb
         self.setWindowTitle(LAB_TITLE)
         self.setModal(True)
-        self.showFullScreen()        # pantalla completa
+        #self.showFullScreen()        # pantalla completa
+        mode_value = self.labdb.get_setting("kiosk_mode", "0")
+        is_kiosk = str(mode_value).strip() in {"1", "true", "True", "yes", "si", "sí"}
+        if is_kiosk:
+            self.showFullScreen()
+        else:
+            self.showMaximized()
         self.setObjectName("LoginDialog")
         self.setStyleSheet(
             """

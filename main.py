@@ -11,5 +11,5 @@ if __name__ == "__main__":
     login = LoginDialog(db)
     if login.exec_() == LoginDialog.Accepted:
         main_win = MainWindow(db, login.user_data)
-        main_win.showFullScreen()
+        main_win.apply_window_mode()
         sys.exit(app.exec_())
