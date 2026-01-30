@@ -5544,7 +5544,7 @@ class MainWindow(QMainWindow):
         self.history_detail_empty.setAlignment(Qt.AlignCenter)
         self.history_detail_empty.setStyleSheet("color: #666; padding: 12px;")
         self.history_detail_tree = QTreeWidget()
-        self.history_detail_tree.setHeaderLabels(["Examen", "Resultado principal", "Estado", "Hora"])
+        self.history_detail_tree.setHeaderLabels(["Examen", "Resultado"])
         self.history_detail_tree.setRootIsDecorated(False)
         self.history_detail_tree.setAlternatingRowColors(True)
         self.history_detail_tree.setItemsExpandable(True)
@@ -5553,8 +5553,6 @@ class MainWindow(QMainWindow):
         header = self.history_detail_tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         self.history_detail_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.history_detail_tree.itemClicked.connect(self._toggle_history_detail_item)
         detail_layout.addWidget(self.history_detail_empty)
@@ -6772,40 +6770,37 @@ class MainWindow(QMainWindow):
                 section_key = "pending"
             grouped[section_key].append(item)
         any_rows = False
+        def build_result_display(detail_item, test_name):
+            raw_result = detail_item.get("raw_result")
+            if self._is_blank_result(raw_result):
+                return "Resultado no registrado"
+            parsed = self._parse_stored_result(raw_result)
+            if parsed.get("type") == "structured":
+                lines = self._format_result_lines(test_name, raw_result, context=detail_context)
+                if lines:
+                    return " | ".join(lines)
+            text_value = parsed.get("value", raw_result or "")
+            if isinstance(text_value, str):
+                text_value = text_value.strip()
+            if text_value:
+                return str(text_value)
+            return "Resultado no registrado"
+
         for section_key, section_label in sections.items():
             items = grouped.get(section_key, [])
             if not items:
                 continue
             any_rows = True
-            section_item = QTreeWidgetItem([section_label, "", "", ""])
+            section_item = QTreeWidgetItem([section_label, ""])
             section_item.setData(0, Qt.UserRole, "section")
             section_font = section_item.font(0)
             section_font.setBold(True)
             section_item.setFont(0, section_font)
+            section_item.setFirstColumnSpanned(True)
             self.history_detail_tree.addTopLevelItem(section_item)
             for detail in items:
                 test_name = detail.get("test") or "—"
                 abbr = self._abbreviate_exam_name(test_name)
-                status_label = section_label
-                badge = QLabel(status_label)
-                if section_key == "results":
-                    badge.setStyleSheet("QLabel { background-color: #e6f7ef; color: #1e8449; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
-                elif section_key == "in_process":
-                    badge.setStyleSheet("QLabel { background-color: #e7f3ff; color: #1f4e79; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
-                elif section_key == "pending":
-                    badge.setStyleSheet("QLabel { background-color: #fff1cc; color: #7a4d00; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
-                else:
-                    badge.setStyleSheet("QLabel { background-color: #f0f0f0; color: #7f8c8d; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
-                time_value = None
-                if section_key == "results":
-                    time_value = detail.get("validated_at") or detail.get("emitted_at")
-                elif section_key == "pending":
-                    time_value = detail.get("pending_since")
-                elif section_key == "in_process":
-                    time_value = detail.get("sample_date_raw")
-                time_display = self._format_time_display(time_value) if time_value else ""
-                if time_display == "00:00":
-                    time_display = ""
                 detail_text = self._build_exam_detail_text(
                     test_name,
                     detail.get("raw_result"),
@@ -6814,8 +6809,8 @@ class MainWindow(QMainWindow):
                     issue=detail.get("issue"),
                     cancel_reason=detail.get("cancel_reason")
                 )
-                summary_text = self.buildResultSummary(detail, detail_text)
-                test_item = QTreeWidgetItem([abbr, "", "", time_display])
+                summary_text = build_result_display(detail, test_name)
+                test_item = QTreeWidgetItem([abbr, ""])
                 test_item.setData(0, Qt.UserRole, "exam")
                 test_item.setToolTip(0, test_name)
                 summary_label = QLabel(summary_text)
@@ -6825,10 +6820,9 @@ class MainWindow(QMainWindow):
                 summary_label.setToolTip(summary_text)
                 summary_label.setStyleSheet("padding: 2px 0;")
                 self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
-                self.history_detail_tree.setItemWidget(test_item, 2, badge)
                 section_item.addChild(test_item)
                 if detail_text:
-                    detail_item = QTreeWidgetItem(["", "", "", ""])
+                    detail_item = QTreeWidgetItem(["", ""])
                     detail_item.setData(0, Qt.UserRole, "detail")
                     detail_item.setFirstColumnSpanned(True)
                     detail_label = QLabel(html.escape(detail_text).replace("\n", "<br>"))
