@@ -1,0 +1,289 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 0c4781d0a103ddba5451025b40739764bd4ebf83..6ad10d08176f8cb6fc89ec1774bfe5207d393838 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -3678,82 +3678,129 @@ class MainWindow(QMainWindow):
+                 if summary:
+                     return summary
+             if "perfil" in normalized_test and ("hep" in normalized_test or "hepa" in normalized_test):
+                 summary = build_from_keys(
+                     ["tgo", "tgp", "bilirrubina_total", "bilirrubina"],
+                     max_items=3
+                 )
+                 if summary:
+                     return summary
+             value_keys = [field["key"] for field in template.get("fields", []) if field.get("key")]
+             summary = build_from_keys(value_keys, max_items=3)
+             if summary:
+                 return summary
+         if isinstance(text_value, str):
+             text_value = text_value.strip()
+         if text_value:
+             return str(text_value)
+         return None
+ 
+     def _is_time_only_result(self, text):
+         if not text:
+             return False
+         cleaned = str(text).strip()
+         return bool(re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", cleaned))
+ 
+-    def buildResultSummary(self, exam):
+-        if not isinstance(exam, dict):
++    def buildResultSummary(self, detail, detail_text=None):
++        if not isinstance(detail, dict):
+             return "Resultado no registrado"
+ 
+         def pick_summary(value):
+             if value is None:
+                 return None
+             cleaned = str(value).strip()
+             if not cleaned:
+                 return None
+             if self._is_time_only_result(cleaned):
+                 return None
+             return cleaned
+ 
+-        test_name = exam.get("test") or ""
+-        summary_text = pick_summary(exam.get("summary_text"))
+-        if not summary_text:
+-            summary_items = exam.get("summary_items") or []
+-            if summary_items:
+-                summary_text = pick_summary(summary_items[0])
+-                if summary_text and ":" in summary_text:
+-                    summary_text = pick_summary(summary_text.split(":", 1)[1])
+-        if not summary_text:
+-            summary_text = pick_summary(self._build_exam_result_summary(test_name, exam.get("raw_result")))
++        def normalize_qualitative(text):
++            if not text:
++                return None
++            normalized = self._normalize_text(text)
++            if "no react" in normalized or "noreact" in normalized:
++                return "No reactivo"
++            if "reactiv" in normalized:
++                return "Reactivo"
++            if "positiv" in normalized:
++                return "Positivo"
++            if "negativ" in normalized:
++                return "Negativo"
++            return None
++
++        def extract_unit(text):
++            if not isinstance(text, str):
++                return None
++            match = re.search(r"-?\d+(?:[.,]\d+)?\s*([^\d\s].*)", text.strip())
++            if match:
++                return match.group(1).strip()
++            return None
++
++        test_name = detail.get("test") or ""
++        raw_result = detail.get("raw_result")
++        observation = detail.get("observation")
++
++        summary_text = pick_summary(self._build_exam_result_summary(test_name, raw_result))
+         if summary_text:
+             return summary_text
+ 
+-        sample_status = (exam.get("sample_status") or "").strip().lower()
+-        completed_states = {"realizado", "emitido", "validado"}
+-        is_completed = bool(exam.get("has_result")) or bool(exam.get("is_emitted")) or sample_status in completed_states
+-        if is_completed or exam.get("sample_received"):
+-            return "Resultado no registrado"
++        parsed = self._parse_stored_result(raw_result)
++        text_value = parsed.get("value", raw_result or "")
++        if isinstance(text_value, str):
++            text_value = text_value.strip()
++
++        qualitative = normalize_qualitative(text_value) or normalize_qualitative(observation)
++        if qualitative:
++            return qualitative
++
++        numeric_value = self._extract_numeric_value(text_value)
++        if numeric_value is not None:
++            formatted_value = self._format_decimal(numeric_value)
++            unit = extract_unit(text_value)
++            if not unit:
++                template = TEST_TEMPLATES.get(test_name)
++                if template:
++                    fields = [field for field in template.get("fields", []) if field.get("key") and field.get("type") != "section"]
++                    if len(fields) == 1:
++                        unit = fields[0].get("unit")
++            abbr = self._abbreviate_exam_name(test_name)
++            unit_text = f" {unit}" if unit else ""
++            return f"{abbr} {formatted_value}{unit_text}".strip()
++
++        if text_value:
++            return str(text_value)
++
++        summary_text = pick_summary(observation)
++        if summary_text:
++            return summary_text
++
++        if detail_text:
++            detail_line = pick_summary(detail_text.splitlines()[0])
++            if detail_line:
++                return detail_line
++
+         return "Resultado no registrado"
+ 
+     def _build_exam_detail_text(self, test_name, raw_result, context=None, observation=None, issue=None, cancel_reason=None):
+         lines = self._format_result_lines(test_name, raw_result, context=context)
+         detail_lines = []
+         for line in lines:
+             cleaned = line.strip()
+             if not cleaned:
+                 continue
+             detail_lines.append(cleaned)
+         if issue:
+             detail_lines.append(f"Notas: {issue}")
+         if cancel_reason:
+             detail_lines.append(f"Motivo de anulación: {cancel_reason}")
+         if observation:
+             detail_lines.append(f"Observaciones: {observation}")
+         return "\n".join(detail_lines)
+ 
+     def _post_process_registry_pairs(self, pairs):
+         if not pairs:
+             return []
+         processed = list(pairs)
+         processed = self._ensure_hematocrit_pair(processed)
+         return processed
+ 
+@@ -5530,50 +5577,51 @@ class MainWindow(QMainWindow):
+         self.history_alerts_placeholder.setStyleSheet("color: #666; padding: 6px;")
+         self.history_alerts_container = QWidget()
+         self.history_alerts_grid = QGridLayout(self.history_alerts_container)
+         self.history_alerts_grid.setContentsMargins(6, 6, 6, 6)
+         self.history_alerts_grid.setHorizontalSpacing(6)
+         self.history_alerts_grid.setVerticalSpacing(6)
+         alerts_scroll = QScrollArea()
+         alerts_scroll.setWidgetResizable(True)
+         alerts_scroll.setFrameShape(QFrame.NoFrame)
+         alerts_scroll.setWidget(self.history_alerts_container)
+         alerts_layout.addWidget(self.history_alerts_placeholder)
+         alerts_layout.addWidget(alerts_scroll)
+         self.history_has_alerts = False
+ 
+         self.history_detail_panel = QGroupBox("Detalle de la orden / Exámenes")
+         detail_layout = QVBoxLayout(self.history_detail_panel)
+         self.history_detail_empty = QLabel("Sin exámenes registrados en esta orden.")
+         self.history_detail_empty.setAlignment(Qt.AlignCenter)
+         self.history_detail_empty.setStyleSheet("color: #666; padding: 12px;")
+         self.history_detail_tree = QTreeWidget()
+         self.history_detail_tree.setHeaderLabels(["Examen", "Resultado principal", "Estado", "Hora"])
+         self.history_detail_tree.setRootIsDecorated(False)
+         self.history_detail_tree.setAlternatingRowColors(True)
+         self.history_detail_tree.setItemsExpandable(True)
+         self.history_detail_tree.setUniformRowHeights(False)
++        self.history_detail_tree.setTextElideMode(Qt.ElideNone)
+         header = self.history_detail_tree.header()
+         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+         header.setSectionResizeMode(1, QHeaderView.Stretch)
+         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+         header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+         self.history_detail_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+         self.history_detail_tree.itemClicked.connect(self._toggle_history_detail_item)
+         detail_layout.addWidget(self.history_detail_empty)
+         detail_layout.addWidget(self.history_detail_tree)
+ 
+         self.history_combined_panel = QFrame()
+         self.history_combined_panel.setFrameShape(QFrame.NoFrame)
+         combined_layout = QVBoxLayout(self.history_combined_panel)
+         combined_layout.setContentsMargins(0, 0, 0, 0)
+         combined_layout.setSpacing(8)
+         combined_layout.addWidget(self.history_alerts_panel)
+         combined_layout.addWidget(self.history_detail_panel)
+         self.history_combined_layout = combined_layout
+ 
+         self.history_mobile_toolbox = QToolBox()
+ 
+         history_tab_layout.addWidget(history_workspace)
+         history_tab_layout.addWidget(self.history_mobile_toolbox)
+         self.history_mobile_toolbox.hide()
+         self.analysis_tabs.addTab(history_tab, "Historial de pacientes")
+@@ -6776,68 +6824,76 @@ class MainWindow(QMainWindow):
+         any_rows = False
+         for section_key, section_label in sections.items():
+             items = grouped.get(section_key, [])
+             if not items:
+                 continue
+             any_rows = True
+             section_item = QTreeWidgetItem([section_label, "", "", ""])
+             section_item.setData(0, Qt.UserRole, "section")
+             section_font = section_item.font(0)
+             section_font.setBold(True)
+             section_item.setFont(0, section_font)
+             self.history_detail_tree.addTopLevelItem(section_item)
+             for detail in items:
+                 test_name = detail.get("test") or "—"
+                 abbr = self._abbreviate_exam_name(test_name)
+                 status_label = section_label
+                 badge = QLabel(status_label)
+                 if section_key == "results":
+                     badge.setStyleSheet("QLabel { background-color: #e6f7ef; color: #1e8449; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 elif section_key == "in_process":
+                     badge.setStyleSheet("QLabel { background-color: #e7f3ff; color: #1f4e79; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 elif section_key == "pending":
+                     badge.setStyleSheet("QLabel { background-color: #fff1cc; color: #7a4d00; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 else:
+                     badge.setStyleSheet("QLabel { background-color: #f0f0f0; color: #7f8c8d; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+-                time_value = detail.get("pending_since") or detail.get("sample_date_raw") or detail.get("order_date_raw")
+-                time_display = self._format_time_display(time_value) or "—"
++                time_value = None
++                if section_key == "results":
++                    time_value = detail.get("validated_at") or detail.get("emitted_at")
++                elif section_key == "pending":
++                    time_value = detail.get("pending_since")
++                elif section_key == "in_process":
++                    time_value = detail.get("sample_date_raw")
++                time_display = self._format_time_display(time_value) if time_value else ""
++                if time_display == "00:00":
++                    time_display = ""
+                 detail_text = self._build_exam_detail_text(
+                     test_name,
+                     detail.get("raw_result"),
+                     context=detail_context,
+                     observation=detail.get("observation"),
+                     issue=detail.get("issue"),
+                     cancel_reason=detail.get("cancel_reason")
+                 )
+-                summary_text = self.buildResultSummary(detail)
+-                if detail_text and (not summary_text or summary_text == "Resultado no registrado"):
+-                    summary_text = detail_text.splitlines()[0]
++                summary_text = self.buildResultSummary(detail, detail_text)
+                 test_item = QTreeWidgetItem([abbr, "", "", time_display])
+                 test_item.setData(0, Qt.UserRole, "exam")
+                 test_item.setToolTip(0, test_name)
+                 summary_label = QLabel(summary_text)
+                 summary_label.setWordWrap(True)
++                summary_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
++                summary_label.setMinimumWidth(0)
+                 summary_label.setToolTip(summary_text)
+                 summary_label.setStyleSheet("padding: 2px 0;")
+                 self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
+                 self.history_detail_tree.setItemWidget(test_item, 2, badge)
+                 section_item.addChild(test_item)
+                 if detail_text:
+                     detail_item = QTreeWidgetItem(["", "", "", ""])
+                     detail_item.setData(0, Qt.UserRole, "detail")
+                     detail_item.setFirstColumnSpanned(True)
+                     detail_label = QLabel(html.escape(detail_text).replace("\n", "<br>"))
+                     detail_label.setWordWrap(True)
+                     detail_label.setTextFormat(Qt.RichText)
+                     detail_label.setStyleSheet("color: #444; padding: 6px 8px;")
+                     self.history_detail_tree.setItemWidget(detail_item, 0, detail_label)
+                     test_item.addChild(detail_item)
+                 test_item.setExpanded(bool(detail_text))
+             section_item.setExpanded(True)
+         if any_rows:
+             self.history_detail_tree.show()
+             self.history_detail_empty.hide()
+         else:
+             self.history_detail_tree.hide()
+             self.history_detail_empty.show()
+ 
+     def _toggle_history_detail_item(self, item, column):
+ 
+EOF
+)

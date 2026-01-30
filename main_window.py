@@ -3700,8 +3700,8 @@ class MainWindow(QMainWindow):
         cleaned = str(text).strip()
         return bool(re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", cleaned))
 
-    def buildResultSummary(self, exam):
-        if not isinstance(exam, dict):
+    def buildResultSummary(self, detail, detail_text=None):
+        if not isinstance(detail, dict):
             return "Resultado no registrado"
 
         def pick_summary(value):
@@ -3714,24 +3714,71 @@ class MainWindow(QMainWindow):
                 return None
             return cleaned
 
-        test_name = exam.get("test") or ""
-        summary_text = pick_summary(exam.get("summary_text"))
-        if not summary_text:
-            summary_items = exam.get("summary_items") or []
-            if summary_items:
-                summary_text = pick_summary(summary_items[0])
-                if summary_text and ":" in summary_text:
-                    summary_text = pick_summary(summary_text.split(":", 1)[1])
-        if not summary_text:
-            summary_text = pick_summary(self._build_exam_result_summary(test_name, exam.get("raw_result")))
+        def normalize_qualitative(text):
+            if not text:
+                return None
+            normalized = self._normalize_text(text)
+            if "no react" in normalized or "noreact" in normalized:
+                return "No reactivo"
+            if "reactiv" in normalized:
+                return "Reactivo"
+            if "positiv" in normalized:
+                return "Positivo"
+            if "negativ" in normalized:
+                return "Negativo"
+            return None
+
+        def extract_unit(text):
+            if not isinstance(text, str):
+                return None
+            match = re.search(r"-?\d+(?:[.,]\d+)?\s*([^\d\s].*)", text.strip())
+            if match:
+                return match.group(1).strip()
+            return None
+
+        test_name = detail.get("test") or ""
+        raw_result = detail.get("raw_result")
+        observation = detail.get("observation")
+
+        summary_text = pick_summary(self._build_exam_result_summary(test_name, raw_result))
         if summary_text:
             return summary_text
 
-        sample_status = (exam.get("sample_status") or "").strip().lower()
-        completed_states = {"realizado", "emitido", "validado"}
-        is_completed = bool(exam.get("has_result")) or bool(exam.get("is_emitted")) or sample_status in completed_states
-        if is_completed or exam.get("sample_received"):
-            return "Resultado no registrado"
+        parsed = self._parse_stored_result(raw_result)
+        text_value = parsed.get("value", raw_result or "")
+        if isinstance(text_value, str):
+            text_value = text_value.strip()
+
+        qualitative = normalize_qualitative(text_value) or normalize_qualitative(observation)
+        if qualitative:
+            return qualitative
+
+        numeric_value = self._extract_numeric_value(text_value)
+        if numeric_value is not None:
+            formatted_value = self._format_decimal(numeric_value)
+            unit = extract_unit(text_value)
+            if not unit:
+                template = TEST_TEMPLATES.get(test_name)
+                if template:
+                    fields = [field for field in template.get("fields", []) if field.get("key") and field.get("type") != "section"]
+                    if len(fields) == 1:
+                        unit = fields[0].get("unit")
+            abbr = self._abbreviate_exam_name(test_name)
+            unit_text = f" {unit}" if unit else ""
+            return f"{abbr} {formatted_value}{unit_text}".strip()
+
+        if text_value:
+            return str(text_value)
+
+        summary_text = pick_summary(observation)
+        if summary_text:
+            return summary_text
+
+        if detail_text:
+            detail_line = pick_summary(detail_text.splitlines()[0])
+            if detail_line:
+                return detail_line
+
         return "Resultado no registrado"
 
     def _build_exam_detail_text(self, test_name, raw_result, context=None, observation=None, issue=None, cancel_reason=None):
@@ -5552,6 +5599,7 @@ class MainWindow(QMainWindow):
         self.history_detail_tree.setAlternatingRowColors(True)
         self.history_detail_tree.setItemsExpandable(True)
         self.history_detail_tree.setUniformRowHeights(False)
+        self.history_detail_tree.setTextElideMode(Qt.ElideNone)
         header = self.history_detail_tree.header()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -6798,8 +6846,16 @@ class MainWindow(QMainWindow):
                     badge.setStyleSheet("QLabel { background-color: #fff1cc; color: #7a4d00; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
                 else:
                     badge.setStyleSheet("QLabel { background-color: #f0f0f0; color: #7f8c8d; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
-                time_value = detail.get("pending_since") or detail.get("sample_date_raw") or detail.get("order_date_raw")
-                time_display = self._format_time_display(time_value) or "—"
+                time_value = None
+                if section_key == "results":
+                    time_value = detail.get("validated_at") or detail.get("emitted_at")
+                elif section_key == "pending":
+                    time_value = detail.get("pending_since")
+                elif section_key == "in_process":
+                    time_value = detail.get("sample_date_raw")
+                time_display = self._format_time_display(time_value) if time_value else ""
+                if time_display == "00:00":
+                    time_display = ""
                 detail_text = self._build_exam_detail_text(
                     test_name,
                     detail.get("raw_result"),
@@ -6808,14 +6864,14 @@ class MainWindow(QMainWindow):
                     issue=detail.get("issue"),
                     cancel_reason=detail.get("cancel_reason")
                 )
-                summary_text = self.buildResultSummary(detail)
-                if detail_text and (not summary_text or summary_text == "Resultado no registrado"):
-                    summary_text = detail_text.splitlines()[0]
+                summary_text = self.buildResultSummary(detail, detail_text)
                 test_item = QTreeWidgetItem([abbr, "", "", time_display])
                 test_item.setData(0, Qt.UserRole, "exam")
                 test_item.setToolTip(0, test_name)
                 summary_label = QLabel(summary_text)
                 summary_label.setWordWrap(True)
+                summary_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+                summary_label.setMinimumWidth(0)
                 summary_label.setToolTip(summary_text)
                 summary_label.setStyleSheet("padding: 2px 0;")
                 self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
