@@ -1,0 +1,254 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 92a0502dbe7896cf33720efa1c7a561f55a7bd56..92152546a3fd80e10965565b04b0929aea0305ac 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -3655,60 +3655,107 @@ class MainWindow(QMainWindow):
+                 summary = build_from_keys(
+                     ["ph", "densidad", "leucocitos_quimico", "nitritos", "proteinas", "glucosa"],
+                     max_items=5
+                 )
+                 if summary:
+                     return summary
+             if "parasit" in normalized_test or "copro" in normalized_test:
+                 summary = build_from_keys(["parasitos", "quistes", "huevos", "trofozoitos"], max_items=3)
+                 if summary:
+                     return summary
+             if "vih" in normalized_test or "hiv" in normalized_test or "rápid" in normalized_test:
+                 summary = build_from_keys(["resultado", "interpretacion"], max_items=1)
+                 if summary:
+                     return summary.replace("Resultado ", "").replace("Interpretación ", "")
+             if "bhcg" in normalized_test or "embarazo" in normalized_test:
+                 summary = build_from_keys(["resultado", "interpretacion"], max_items=1)
+                 if summary:
+                     return summary.replace("Resultado ", "").replace("Interpretación ", "")
+             if any(key in normalized_test for key in ["hemograma", "hemoglob", "hematocrit", "leucoc", "plaquet"]):
+                 summary = build_from_keys(
+                     ["hemoglobina", "hematocrito", "leucocitos", "plaquetas", "eritrocitos"],
+                     max_items=4
+                 )
+                 if summary:
+                     return summary
++            if "perfil" in normalized_test and ("hep" in normalized_test or "hepa" in normalized_test):
++                summary = build_from_keys(
++                    ["tgo", "tgp", "bilirrubina_total", "bilirrubina"],
++                    max_items=3
++                )
++                if summary:
++                    return summary
+             value_keys = [field["key"] for field in template.get("fields", []) if field.get("key")]
+             summary = build_from_keys(value_keys, max_items=3)
+             if summary:
+                 return summary
+         if isinstance(text_value, str):
+             text_value = text_value.strip()
+         if text_value:
+             return str(text_value)
+         return None
+ 
++    def _is_time_only_result(self, text):
++        if not text:
++            return False
++        cleaned = str(text).strip()
++        return bool(re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", cleaned))
++
++    def buildResultSummary(self, exam):
++        if not isinstance(exam, dict):
++            return "Resultado no registrado"
++
++        def pick_summary(value):
++            if value is None:
++                return None
++            cleaned = str(value).strip()
++            if not cleaned:
++                return None
++            if self._is_time_only_result(cleaned):
++                return None
++            return cleaned
++
++        test_name = exam.get("test") or ""
++        summary_text = pick_summary(exam.get("summary_text"))
++        if not summary_text:
++            summary_items = exam.get("summary_items") or []
++            if summary_items:
++                summary_text = pick_summary(summary_items[0])
++                if summary_text and ":" in summary_text:
++                    summary_text = pick_summary(summary_text.split(":", 1)[1])
++        if not summary_text:
++            summary_text = pick_summary(self._build_exam_result_summary(test_name, exam.get("raw_result")))
++        if summary_text:
++            return summary_text
++
++        sample_status = (exam.get("sample_status") or "").strip().lower()
++        completed_states = {"realizado", "emitido", "validado"}
++        is_completed = bool(exam.get("has_result")) or bool(exam.get("is_emitted")) or sample_status in completed_states
++        if is_completed or exam.get("sample_received"):
++            return "Resultado no registrado"
++        return "Resultado no registrado"
++
+     def _build_exam_detail_text(self, test_name, raw_result, context=None, observation=None, issue=None, cancel_reason=None):
+         lines = self._format_result_lines(test_name, raw_result, context=context)
+         detail_lines = []
+         for line in lines:
+             cleaned = line.strip()
+             if not cleaned:
+                 continue
+             detail_lines.append(cleaned)
+         if issue:
+             detail_lines.append(f"Notas: {issue}")
+         if cancel_reason:
+             detail_lines.append(f"Motivo de anulación: {cancel_reason}")
+         if observation:
+             detail_lines.append(f"Observaciones: {observation}")
+         return "\n".join(detail_lines)
+ 
+     def _post_process_registry_pairs(self, pairs):
+         if not pairs:
+             return []
+         processed = list(pairs)
+         processed = self._ensure_hematocrit_pair(processed)
+         return processed
+ 
+     def _ensure_hematocrit_pair(self, pairs):
+         hematocrit_index = None
+@@ -6522,74 +6569,76 @@ class MainWindow(QMainWindow):
+         insurance_text = normalize(self._format_insurance_display(entry.get("insurance_type")))
+         birth_display = normalize(self._format_short_date(entry.get("birth_date")))
+ 
+         height_raw = normalize(entry.get("height"))
+         weight_raw = normalize(entry.get("weight"))
+         bp_raw = normalize(entry.get("blood_pressure"))
+         height_num = self._extract_numeric_value(height_raw) if height_raw else None
+         weight_num = self._extract_numeric_value(weight_raw) if weight_raw else None
+         bmi_display = None
+         if height_num and weight_num:
+             height_m = height_num / 100 if height_num > 10 else height_num
+             if height_m > 0:
+                 bmi_display = self._format_decimal(weight_num / (height_m ** 2), 1)
+         if height_raw and height_num and not re.search(r'[a-zA-Z]', height_raw):
+             height_raw = f"{self._format_decimal(height_num, 1)} cm"
+         if weight_raw and weight_num and not re.search(r'[a-zA-Z]', weight_raw):
+             weight_raw = f"{self._format_decimal(weight_num, 1)} kg"
+         if bp_raw and isinstance(bp_raw, str):
+             bp_raw = bp_raw.replace("  ", " ").strip()
+ 
+         order_date_raw = entry.get("order_date_raw")
+         order_date = normalize(self._format_date_display(order_date_raw, ""))
+         order_time = normalize(format_time(order_date_raw))
+         emitted_time = normalize(format_time(entry.get("emitted_at")))
+         requested_by = normalize(entry.get("requested_by"))
++        fua_status = "FUA registrada" if normalize(entry.get("fua_number")) else "Sin FUA"
+ 
+         personal_rows = []
+         pregnancy_display = self._format_pregnancy_display(entry, include_label=False, include_no=True)
+         add_row(personal_rows, "Nombre completo", normalize(patient_name))
+         add_row(personal_rows, doc_label, doc_number)
+         add_row(personal_rows, "Edad", age_display)
+         add_row(personal_rows, "Sexo", sex_display)
+         add_row(personal_rows, "Gestación", pregnancy_display)
+         add_row(personal_rows, "Procedencia", origin_display)
+         add_row(personal_rows, "HCL", hcl_display)
+         add_row(personal_rows, "Seguro", insurance_text)
+         add_row(personal_rows, "F. Nac.", birth_display)
+ 
+         vitals_rows = []
+         add_row(vitals_rows, "Talla", height_raw)
+         add_row(vitals_rows, "Peso", weight_raw)
+         add_row(vitals_rows, "Presión arterial", bp_raw)
+         add_row(vitals_rows, "IMC", bmi_display)
+ 
+         order_rows = []
+         add_row(order_rows, "Médico solicitante", requested_by)
+         add_row(order_rows, "Fecha de orden", order_date)
+         add_row(order_rows, "Hora de registro", order_time)
+         add_row(order_rows, "Hora de emisión/validación", emitted_time)
++        add_row(order_rows, "FUA", fua_status)
+ 
+         header_date = self._format_date_for_registry(entry)
+         order_id = normalize(entry.get("order_id"))
+         header_parts = [part for part in [f"Orden #{order_id}" if order_id else None, header_date] if part]
+         header_text = " · ".join(header_parts) if header_parts else "Resumen clínico"
+         pregnancy_badge = ""
+         if self._normalize_bool(entry.get("is_pregnant")):
+             badge_text = pregnancy_display or "Gestante"
+             pregnancy_badge = (
+                 f"<span style='background:#e8e1ff; color:#4b2e83; border-radius:8px; padding:2px 8px;"
+                 f" margin-left:8px; font-size:9pt; font-weight:700;'>{esc(badge_text)}</span>"
+             )
+ 
+         html_output = f"""
+         <div style="font-weight:700; font-size:11.2pt; margin-bottom:4px;">{esc(header_text)}{pregnancy_badge}</div>
+         {section_block("Datos personales", personal_rows)}
+         {section_block("Signos vitales", vitals_rows)}
+         {section_block("Datos de la orden", order_rows)}
+         """
+         self.history_patient_summary_label.setText(html_output)
+ 
+     def _extract_history_alert_tags(self, entry):
+         tags = []
+         is_pregnant = self._normalize_bool(entry.get("is_pregnant"))
+         if is_pregnant:
+@@ -6717,59 +6766,51 @@ class MainWindow(QMainWindow):
+             is_emitted = bool(item.get("is_emitted")) or order_emitted or sample_status in {"emitido", "validado"}
+             if is_cancelled or is_rejected:
+                 section_key = "cancelled"
+             elif has_result or is_emitted:
+                 section_key = "results"
+             elif item.get("sample_received"):
+                 section_key = "in_process"
+             else:
+                 section_key = "pending"
+             grouped[section_key].append(item)
+         any_rows = False
+         for section_key, section_label in sections.items():
+             items = grouped.get(section_key, [])
+             if not items:
+                 continue
+             any_rows = True
+             section_item = QTreeWidgetItem([section_label, "", "", ""])
+             section_item.setData(0, Qt.UserRole, "section")
+             section_font = section_item.font(0)
+             section_font.setBold(True)
+             section_item.setFont(0, section_font)
+             self.history_detail_tree.addTopLevelItem(section_item)
+             for detail in items:
+                 test_name = detail.get("test") or "—"
+                 abbr = self._abbreviate_exam_name(test_name)
+-                summary_text = detail.get("summary_text")
+-                if not summary_text:
+-                    summary_items = detail.get("summary_items") or []
+-                    if summary_items:
+-                        summary_text = summary_items[0]
+-                        if ":" in summary_text:
+-                            summary_text = summary_text.split(":", 1)[1].strip()
+-                if not summary_text:
+-                    summary_text = "(sin resultado)"
++                summary_text = self.buildResultSummary(detail)
+                 status_label = section_label
+                 badge = QLabel(status_label)
+                 if section_key == "results":
+                     badge.setStyleSheet("QLabel { background-color: #e6f7ef; color: #1e8449; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 elif section_key == "in_process":
+                     badge.setStyleSheet("QLabel { background-color: #e7f3ff; color: #1f4e79; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 elif section_key == "pending":
+                     badge.setStyleSheet("QLabel { background-color: #fff1cc; color: #7a4d00; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 else:
+                     badge.setStyleSheet("QLabel { background-color: #f0f0f0; color: #7f8c8d; border-radius: 8px; padding: 2px 8px; font-weight: 600; }")
+                 time_value = detail.get("pending_since") or detail.get("sample_date_raw") or detail.get("order_date_raw")
+                 time_display = self._format_time_display(time_value) or "—"
+                 test_item = QTreeWidgetItem([abbr, "", "", time_display])
+                 test_item.setData(0, Qt.UserRole, "exam")
+                 test_item.setToolTip(0, test_name)
+                 summary_label = QLabel(summary_text)
+                 summary_label.setWordWrap(True)
+                 summary_label.setToolTip(summary_text)
+                 summary_label.setStyleSheet("padding: 2px 0;")
+                 self.history_detail_tree.setItemWidget(test_item, 1, summary_label)
+                 self.history_detail_tree.setItemWidget(test_item, 2, badge)
+                 section_item.addChild(test_item)
+                 detail_text = self._build_exam_detail_text(
+                     test_name,
+                     detail.get("raw_result"),
+ 
+EOF
+)

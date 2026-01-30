@@ -3677,6 +3677,13 @@ class MainWindow(QMainWindow):
                 )
                 if summary:
                     return summary
+            if "perfil" in normalized_test and ("hep" in normalized_test or "hepa" in normalized_test):
+                summary = build_from_keys(
+                    ["tgo", "tgp", "bilirrubina_total", "bilirrubina"],
+                    max_items=3
+                )
+                if summary:
+                    return summary
             value_keys = [field["key"] for field in template.get("fields", []) if field.get("key")]
             summary = build_from_keys(value_keys, max_items=3)
             if summary:
@@ -3686,6 +3693,46 @@ class MainWindow(QMainWindow):
         if text_value:
             return str(text_value)
         return None
+
+    def _is_time_only_result(self, text):
+        if not text:
+            return False
+        cleaned = str(text).strip()
+        return bool(re.fullmatch(r"\d{1,2}:\d{2}(?::\d{2})?", cleaned))
+
+    def buildResultSummary(self, exam):
+        if not isinstance(exam, dict):
+            return "Resultado no registrado"
+
+        def pick_summary(value):
+            if value is None:
+                return None
+            cleaned = str(value).strip()
+            if not cleaned:
+                return None
+            if self._is_time_only_result(cleaned):
+                return None
+            return cleaned
+
+        test_name = exam.get("test") or ""
+        summary_text = pick_summary(exam.get("summary_text"))
+        if not summary_text:
+            summary_items = exam.get("summary_items") or []
+            if summary_items:
+                summary_text = pick_summary(summary_items[0])
+                if summary_text and ":" in summary_text:
+                    summary_text = pick_summary(summary_text.split(":", 1)[1])
+        if not summary_text:
+            summary_text = pick_summary(self._build_exam_result_summary(test_name, exam.get("raw_result")))
+        if summary_text:
+            return summary_text
+
+        sample_status = (exam.get("sample_status") or "").strip().lower()
+        completed_states = {"realizado", "emitido", "validado"}
+        is_completed = bool(exam.get("has_result")) or bool(exam.get("is_emitted")) or sample_status in completed_states
+        if is_completed or exam.get("sample_received"):
+            return "Resultado no registrado"
+        return "Resultado no registrado"
 
     def _build_exam_detail_text(self, test_name, raw_result, context=None, observation=None, issue=None, cancel_reason=None):
         lines = self._format_result_lines(test_name, raw_result, context=context)
@@ -6544,6 +6591,7 @@ class MainWindow(QMainWindow):
         order_time = normalize(format_time(order_date_raw))
         emitted_time = normalize(format_time(entry.get("emitted_at")))
         requested_by = normalize(entry.get("requested_by"))
+        fua_status = "FUA registrada" if normalize(entry.get("fua_number")) else "Sin FUA"
 
         personal_rows = []
         pregnancy_display = self._format_pregnancy_display(entry, include_label=False, include_no=True)
@@ -6568,6 +6616,7 @@ class MainWindow(QMainWindow):
         add_row(order_rows, "Fecha de orden", order_date)
         add_row(order_rows, "Hora de registro", order_time)
         add_row(order_rows, "Hora de emisión/validación", emitted_time)
+        add_row(order_rows, "FUA", fua_status)
 
         header_date = self._format_date_for_registry(entry)
         order_id = normalize(entry.get("order_id"))
@@ -6739,15 +6788,7 @@ class MainWindow(QMainWindow):
             for detail in items:
                 test_name = detail.get("test") or "—"
                 abbr = self._abbreviate_exam_name(test_name)
-                summary_text = detail.get("summary_text")
-                if not summary_text:
-                    summary_items = detail.get("summary_items") or []
-                    if summary_items:
-                        summary_text = summary_items[0]
-                        if ":" in summary_text:
-                            summary_text = summary_text.split(":", 1)[1].strip()
-                if not summary_text:
-                    summary_text = "(sin resultado)"
+                summary_text = self.buildResultSummary(detail)
                 status_label = section_label
                 badge = QLabel(status_label)
                 if section_key == "results":
