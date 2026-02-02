@@ -3407,58 +3407,58 @@ class MainWindow(QMainWindow):
         if isinstance(value, str):
             return value.strip() == ""
         return False
-    def _format_result_lines(self, test_name, raw_result, context=None):
-        parsed = self._parse_stored_result(raw_result)
-        template = TEST_TEMPLATES.get(test_name)
-        effective_context = context or self.current_order_context
-        if parsed.get("type") == "structured" and template:
-            values = parsed.get("values", {})
-            value_lines = []
-            pending_section = None
-            for field_def in template.get("fields", []):
-                if field_def.get("type") == "section":
-                    section_label = field_def.get("label", "")
-                    pending_section = f"  {section_label}:" if section_label else None
-                    continue
-                key = field_def.get("key")
-                if not key:
-                    continue
-                value = values.get(key, "")
-                if isinstance(value, str):
-                    stripped = value.strip()
-                    if stripped == "":
-                        continue
-                    display_value = " ".join(value.splitlines()).strip()
-                else:
-                    if self._is_blank_result(value):
-                        continue
-                    display_value = value
-                unit = field_def.get("unit")
-                field_type = field_def.get("type")
-                if unit and field_type not in ("bool", "text_area", "choice"):
-                    display_text = str(display_value)
-                    if not display_text.endswith(unit):
-                        display_value = f"{display_text} {unit}"
-                reference = self._get_field_reference(field_def, effective_context)
-                label = field_def.get("label", key)
-                if pending_section:
-                    value_lines.append(pending_section)
-                    pending_section = None
-                bullet = f"  • {label}: {display_value}"
-                if reference:
-                    bullet += f" (Ref: {reference})"
-                value_lines.append(bullet)
-            if not value_lines:
-                return []
-            return [f"{test_name}:"] + value_lines
-        text_value = parsed.get("value", raw_result or "")
+    def _build_result_items(self, test_name, raw_result, context=None):
+        structure = self._extract_result_structure(test_name, raw_result, context=context)
+        if structure.get("type") == "structured":
+            return structure.get("items", [])
+        text_value = structure.get("value", raw_result or "")
         if isinstance(text_value, str):
             text_value = text_value.strip()
-            if text_value == "":
-                return []
-        elif self._is_blank_result(text_value):
+        if self._is_blank_result(text_value):
             return []
-        return [f"{test_name}: {text_value}"]
+        return [{
+            "type": "value",
+            "key": "resultado",
+            "label": "",
+            "value": text_value,
+            "reference": None
+        }]
+
+    def _format_result_lines(self, test_name, raw_result, context=None, include_reference=True):
+        items = self._build_result_items(test_name, raw_result, context=context)
+        if not items:
+            return []
+        if (
+            len(items) == 1
+            and items[0].get("type") == "value"
+            and not items[0].get("label")
+        ):
+            value = items[0].get("value")
+            if self._is_blank_result(value):
+                return []
+            return [f"{test_name}: {value}"]
+        value_lines = []
+        for item in items:
+            item_type = item.get("type")
+            if item_type == "section":
+                section_label = item.get("label", "")
+                if section_label:
+                    value_lines.append(f"  {section_label}:")
+                continue
+            if item_type != "value":
+                continue
+            value = item.get("value")
+            if self._is_blank_result(value):
+                continue
+            label = item.get("label", item.get("key", ""))
+            bullet = f"  • {label}: {value}" if label else f"  • {value}"
+            reference = item.get("reference")
+            if include_reference and reference:
+                bullet += f" (Ref: {reference})"
+            value_lines.append(bullet)
+        if not value_lines:
+            return []
+        return [f"{test_name}:"] + value_lines
     def _format_result_for_export(self, test_name, raw_result, context=None):
         lines = self._format_result_lines(test_name, raw_result, context=context)
         if not lines:
@@ -5548,26 +5548,25 @@ class MainWindow(QMainWindow):
 
         self.history_has_alerts = False
 
-        self.history_detail_panel = QGroupBox("Detalle de la orden / Exámenes")
+        self.history_detail_panel = QGroupBox("Resultados de la orden")
         detail_layout = QVBoxLayout(self.history_detail_panel)
-        self.history_detail_empty = QLabel("Sin exámenes registrados en esta orden.")
+        self.history_detail_empty = QLabel("Sin resultados emitidos en esta orden.")
         self.history_detail_empty.setAlignment(Qt.AlignCenter)
         self.history_detail_empty.setStyleSheet("color: #666; padding: 12px;")
-        self.history_detail_tree = QTreeWidget()
-        self.history_detail_tree.setHeaderLabels(["Examen", "Parámetro", "Resultado"])
-        self.history_detail_tree.setRootIsDecorated(False)
-        self.history_detail_tree.setAlternatingRowColors(True)
-        self.history_detail_tree.setItemsExpandable(True)
-        self.history_detail_tree.setUniformRowHeights(False)
-        self.history_detail_tree.setTextElideMode(Qt.ElideNone)
-        header = self.history_detail_tree.header()
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
-        self.history_detail_tree.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.history_detail_tree.itemClicked.connect(self._toggle_history_detail_item)
+        self.history_results_table = QTableWidget(0, 2)
+        self.history_results_table.setHorizontalHeaderLabels(["Examen", "Resultado"])
+        self.history_results_table.setAlternatingRowColors(True)
+        self.history_results_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.history_results_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.history_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.history_results_table.setWordWrap(True)
+        self.history_results_table.verticalHeader().setVisible(False)
+        history_results_header = self.history_results_table.horizontalHeader()
+        history_results_header.setStretchLastSection(True)
+        history_results_header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.history_results_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         detail_layout.addWidget(self.history_detail_empty)
-        detail_layout.addWidget(self.history_detail_tree)
+        detail_layout.addWidget(self.history_results_table)
 
         self.history_combined_panel = QFrame()
         self.history_combined_panel.setFrameShape(QFrame.NoFrame)
@@ -6451,7 +6450,7 @@ class MainWindow(QMainWindow):
                     widget.setParent(None)
             self.history_mobile_toolbox.addItem(self.history_orders_panel, "Historial")
             self.history_mobile_toolbox.addItem(self.history_patient_panel, "Paciente")
-            self.history_mobile_toolbox.addItem(self.history_detail_panel, "Detalle de orden")
+            self.history_mobile_toolbox.addItem(self.history_detail_panel, "Resultados")
             return
         self.history_mobile_toolbox.hide()
         self.history_workspace.show()
@@ -6768,15 +6767,15 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'history_alerts_bar_container') and total_height:
             self.history_alerts_bar_container.setFixedHeight(total_height)
     def _render_history_detail(self, entry):
-        if not hasattr(self, 'history_detail_tree'):
+        if not hasattr(self, 'history_results_table'):
             return
-        self.history_detail_tree.clear()
-        self.history_detail_empty.setText("Sin exámenes registrados en esta orden.")
+        self.history_results_table.setRowCount(0)
+        self.history_detail_empty.setText("Sin resultados emitidos en esta orden.")
         detail_items = []
         if isinstance(entry, dict):
             detail_items = entry.get("test_details", [])
         if not detail_items:
-            self.history_detail_tree.hide()
+            self.history_results_table.hide()
             self.history_detail_empty.show()
             return
         age_years = None
@@ -6787,110 +6786,54 @@ class MainWindow(QMainWindow):
             except (TypeError, ValueError):
                 age_years = None
         detail_context = {
-            "patient": {"sex": entry.get("sex") if isinstance(entry, dict) else None, "birth_date": entry.get("birth_date") if isinstance(entry, dict) else None},
+            "patient": {
+                "sex": entry.get("sex") if isinstance(entry, dict) else None,
+                "birth_date": entry.get("birth_date") if isinstance(entry, dict) else None
+            },
             "order": {"age_years": age_years}
         }
-        def build_parameter_rows(detail_item, context):
-            test_name = detail_item.get("test") or ""
-            raw_result = detail_item.get("raw_result")
-            structure = self._extract_result_structure(test_name, raw_result, context=context)
-            rows = []
-            if structure.get("type") == "structured":
-                for item in structure.get("items", []):
-                    if item.get("type") != "value":
-                        continue
-                    value = item.get("value")
-                    if self._is_blank_result(value):
-                        value = "Resultado no registrado"
-                    rows.append({
-                        "param": item.get("label", "") or "Resultado",
-                        "result": value,
-                        "param_id": item.get("key")
-                    })
-                if not rows:
-                    rows.append({"param": "Resultado", "result": "Resultado no registrado", "param_id": "resultado"})
-            else:
-                value = structure.get("value", "")
+        rows = []
+        for detail in detail_items:
+            test_name = detail.get("test") or "—"
+            raw_result = detail.get("raw_result")
+            for item in self._build_result_items(test_name, raw_result, context=detail_context):
+                if item.get("type") != "value":
+                    continue
+                value = item.get("value")
                 if self._is_blank_result(value):
-                    value = "Resultado no registrado"
-                rows.append({"param": "Resultado", "result": value, "param_id": "resultado"})
-            issue = detail_item.get("issue")
-            cancel_reason = detail_item.get("cancel_reason")
-            observation = detail_item.get("observation")
-            if issue:
-                rows.append({"param": "Notas", "result": issue, "param_id": "issue"})
-            if cancel_reason:
-                rows.append({"param": "Motivo de anulación", "result": cancel_reason, "param_id": "cancel_reason"})
-            if observation:
-                rows.append({"param": "Observaciones", "result": observation, "param_id": "observation"})
-            return rows
-        sections = OrderedDict([
-            ("results", "Realizado"),
-            ("in_process", "En proceso"),
-            ("pending", "Pendiente"),
-            ("cancelled", "Anulado"),
-        ])
-        grouped = {key: [] for key in sections}
-        order_emitted = bool(entry.get("emitted")) if isinstance(entry, dict) else False
-        for item in detail_items:
-            sample_status = (item.get("sample_status") or "").strip().lower()
-            is_cancelled = bool(item.get("is_cancelled")) or sample_status == "anulado"
-            is_rejected = sample_status == "rechazada"
-            has_result = bool(item.get("has_result"))
-            is_emitted = bool(item.get("is_emitted")) or order_emitted or sample_status in {"emitido", "validado"}
-            if is_cancelled or is_rejected:
-                section_key = "cancelled"
-            elif has_result or is_emitted:
-                section_key = "results"
-            elif item.get("sample_received"):
-                section_key = "in_process"
-            else:
-                section_key = "pending"
-            grouped[section_key].append(item)
-        any_rows = False
-        for section_key, section_label in sections.items():
-            items = grouped.get(section_key, [])
-            if not items:
-                continue
-            any_rows = True
-            section_item = QTreeWidgetItem([section_label, "", ""])
-            section_item.setData(0, Qt.UserRole, "section")
-            section_font = section_item.font(0)
-            section_font.setBold(True)
-            section_item.setFont(0, section_font)
-            section_item.setFirstColumnSpanned(True)
-            self.history_detail_tree.addTopLevelItem(section_item)
-            for detail in items:
-                test_name = detail.get("test") or "—"
-                display_name = test_name
-                parameter_rows = build_parameter_rows(detail, detail_context)
-                test_item = QTreeWidgetItem([display_name, "", ""])
-                test_item.setData(0, Qt.UserRole, "exam")
-                test_item.setData(0, Qt.UserRole + 1, detail.get("test_id"))
-                test_item.setToolTip(0, test_name)
-                section_item.addChild(test_item)
-                for row in parameter_rows:
-                    param_item = QTreeWidgetItem(["", row["param"], ""])
-                    param_item.setData(0, Qt.UserRole, "param")
-                    param_item.setData(1, Qt.UserRole + 1, row.get("param_id"))
-                    result_text = str(row["result"])
-                    result_label = QLabel(result_text)
-                    result_label.setWordWrap(True)
-                    result_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
-                    result_label.setMinimumWidth(0)
-                    result_label.setToolTip(result_text)
-                    result_label.setTextFormat(Qt.PlainText)
-                    result_label.setStyleSheet("padding: 2px 0;")
-                    self.history_detail_tree.setItemWidget(param_item, 2, result_label)
-                    test_item.addChild(param_item)
-                test_item.setExpanded(True)
-            section_item.setExpanded(True)
-        if any_rows:
-            self.history_detail_tree.show()
-            self.history_detail_empty.hide()
-        else:
-            self.history_detail_tree.hide()
+                    continue
+                label = item.get("label", "") or ""
+                if label:
+                    result_text = f"{label}: {value}"
+                else:
+                    result_text = str(value)
+                rows.append({
+                    "exam": test_name,
+                    "result": result_text,
+                    "test_id": detail.get("test_id"),
+                    "param_id": item.get("key")
+                })
+        if not rows:
+            self.history_results_table.hide()
             self.history_detail_empty.show()
+            return
+        self.history_results_table.setRowCount(len(rows))
+        last_exam_id = object()
+        for row_idx, row in enumerate(rows):
+            current_exam_id = row.get("test_id")
+            exam_name = row["exam"] if current_exam_id != last_exam_id else ""
+            exam_item = QTableWidgetItem(exam_name)
+            exam_item.setData(Qt.UserRole, row.get("test_id"))
+            result_item = QTableWidgetItem(row["result"])
+            result_item.setData(Qt.UserRole + 1, row.get("param_id"))
+            result_item.setToolTip(row["result"])
+            result_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.history_results_table.setItem(row_idx, 0, exam_item)
+            self.history_results_table.setItem(row_idx, 1, result_item)
+            last_exam_id = current_exam_id
+        self.history_results_table.resizeRowsToContents()
+        self.history_results_table.show()
+        self.history_detail_empty.hide()
 
     def _toggle_history_detail_item(self, item, column):
         if not item or item.data(0, Qt.UserRole) != "exam":
