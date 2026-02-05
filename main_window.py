@@ -3899,14 +3899,14 @@ class MainWindow(QMainWindow):
             test_name = record.get("test")
             test_label = " ".join(str(test_name or "").split()).strip()
             if has_result:
+                cleaned_items = []
                 for item in summary_items:
                     cleaned = str(item).strip()
-                    if not cleaned:
-                        continue
-                    if test_label:
-                        grouped_text = f"{test_label}: {cleaned}"
-                    else:
-                        grouped_text = cleaned
+                    if cleaned:
+                        cleaned_items.append(cleaned)
+                if cleaned_items:
+                    merged_text = " | ".join(cleaned_items)
+                    grouped_text = f"{test_label}: {merged_text}" if test_label else merged_text
                     entry["groups"].setdefault(group_key, []).append(grouped_text)
             test_id = record.get("test_id")
             if test_name:
@@ -6030,9 +6030,19 @@ class MainWindow(QMainWindow):
                 "order": {"age_years": age_years}
             }
             summary_text = self._build_exam_result_summary(test_name, result, context=context)
-            if not summary_text:
+            detail_text = self._build_exam_detail_text(
+                test_name,
+                result,
+                context=context,
+                observation=observation,
+                issue=sample_issue
+            )
+            detail_lines = [line.strip() for line in detail_text.splitlines() if line.strip()]
+            if not detail_lines and summary_text:
+                detail_lines = [summary_text]
+            if not detail_lines:
                 continue
-            result_text = summary_text
+            result_text = " | ".join(detail_lines)
             activity_data.append({
                 "entry_id": test_entry_id,
                 "order_id": order_id,
@@ -6054,8 +6064,8 @@ class MainWindow(QMainWindow):
                 "age_years": age_years,
                 "test": test_name,
                 "result": result_text,
-                "summary_items": [summary_text],
-                "summary_text": summary_text,
+                "summary_items": detail_lines,
+                "summary_text": summary_text or result_text,
                 "has_result": True,
                 "category": category,
                 "order_observations": order_obs,
@@ -7112,12 +7122,21 @@ class MainWindow(QMainWindow):
             }
             summary_text = self._build_exam_result_summary(test_name, raw_result, context=context)
             sample_received = self._is_sample_received_status(sample_status)
-            has_result = bool(summary_text) or not self._is_blank_result(raw_result)
+            detail_text = self._build_exam_detail_text(
+                test_name,
+                raw_result,
+                context=context,
+                observation=observation,
+                issue=sample_issue,
+                cancel_reason=deleted_reason if deleted else None
+            )
+            detail_lines = [line.strip() for line in detail_text.splitlines() if line.strip()]
+            has_result = bool(detail_lines) or not self._is_blank_result(raw_result)
             summary_items = []
-            if summary_text:
-                summary_items = [f"{test_name}: {summary_text}"]
+            if detail_lines:
+                summary_items = detail_lines
             elif sample_received:
-                summary_items = [f"{test_name}: Recibida (pendiente resultado)"]
+                summary_items = ["Recibida (pendiente resultado)"]
             result_text = "; ".join(summary_items)
             records.append({
                 "entry_id": entry_id,
@@ -7144,7 +7163,7 @@ class MainWindow(QMainWindow):
                 "test_id": test_id,
                 "result": result_text,
                 "summary_items": summary_items,
-                "summary_text": summary_text,
+                "summary_text": summary_text or result_text,
                 "raw_result": raw_result,
                 "has_result": has_result,
                 "sample_received": sample_received,

@@ -1,0 +1,262 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 59b5926afc25a7742855f66d54fda29feb63bbcf..32a7691e279b66e55caf39bbe3611e3e455955c1 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -3877,58 +3877,58 @@ class MainWindow(QMainWindow):
+                     "sex": record.get("sex"),
+                     "origin": record.get("origin"),
+                     "is_pregnant": record.get("is_pregnant"),
+                     "gestational_age_weeks": record.get("gestational_age_weeks"),
+                     "expected_delivery_date": record.get("expected_delivery_date"),
+                     "age": record.get("age", ""),
+                     "first_name": record.get("first_name"),
+                     "last_name": record.get("last_name"),
+                     "observations": record.get("order_observations"),
+                     "requested_by": record.get("requested_by"),
+                     "insurance_type": record.get("insurance_type"),
+                     "fua_number": record.get("fua_number"),
+                     "emitted": record.get("emitted"),
+                     "emitted_at": record.get("emitted_at"),
+                     "groups": {key: [] for key in group_keys},
+                     "tests": [],
+                     "sample_statuses": [],
+                     "pending_tests": [],
+                     "test_detail_map": OrderedDict()
+                 }
+                 grouped[order_id] = entry
+             group_key = self._map_category_group(record.get("category"))
+             test_name = record.get("test")
+             test_label = " ".join(str(test_name or "").split()).strip()
+             if has_result:
++                cleaned_items = []
+                 for item in summary_items:
+                     cleaned = str(item).strip()
+-                    if not cleaned:
+-                        continue
+-                    if test_label:
+-                        grouped_text = f"{test_label}: {cleaned}"
+-                    else:
+-                        grouped_text = cleaned
++                    if cleaned:
++                        cleaned_items.append(cleaned)
++                if cleaned_items:
++                    merged_text = " | ".join(cleaned_items)
++                    grouped_text = f"{test_label}: {merged_text}" if test_label else merged_text
+                     entry["groups"].setdefault(group_key, []).append(grouped_text)
+             test_id = record.get("test_id")
+             if test_name:
+                 test_clean = str(test_name).strip()
+                 if test_clean and test_clean not in entry.setdefault("tests", []):
+                     entry["tests"].append(test_clean)
+                 detail_key = test_id if test_id not in (None, "") else test_clean
+                 detail_map = entry.setdefault("test_detail_map", OrderedDict())
+                 detail_entry = detail_map.get(detail_key, {
+                     "test": test_clean,
+                     "test_id": test_id,
+                     "group": group_key,
+                     "summary_items": [],
+                     "summary_text": None,
+                     "has_result": False,
+                     "sample_received": False,
+                     "sample_status": None,
+                     "is_cancelled": False,
+                     "cancel_reason": None,
+                     "is_emitted": False,
+                     "issue": None,
+                     "is_critical": False,
+                     "observation": None,
+                     "raw_result": None,
+                     "pending_since": None,
+@@ -6008,76 +6008,86 @@ class MainWindow(QMainWindow):
+             is_pregnant,
+             gest_age_weeks,
+             expected_delivery,
+             age_years,
+             order_obs,
+             insurance_type,
+             fua_number,
+             test_name,
+             category,
+             result,
+             sample_status,
+             sample_issue,
+             observation
+         ) in rows:
+             display_date = self._format_date_display(sample_date_str, "-")
+             if display_date == "-":
+                 display_date = self._format_datetime_display(date_str, date_str or "-")
+             patient_name = " ".join(part for part in [(first or "").upper(), (last or "").upper()] if part).strip() or "-"
+             doc_text = " ".join(part for part in (doc_type, doc_number) if part).strip() or "-"
+             age_display = str(age_years) if age_years not in (None, "") else "-"
+             context = {
+                 "patient": {"sex": sex, "birth_date": birth_date},
+                 "order": {"age_years": age_years}
+             }
+             summary_text = self._build_exam_result_summary(test_name, result, context=context)
+-            if not summary_text:
++            detail_text = self._build_exam_detail_text(
++                test_name,
++                result,
++                context=context,
++                observation=observation,
++                issue=sample_issue
++            )
++            detail_lines = [line.strip() for line in detail_text.splitlines() if line.strip()]
++            if not detail_lines and summary_text:
++                detail_lines = [summary_text]
++            if not detail_lines:
+                 continue
+-            result_text = summary_text
++            result_text = " | ".join(detail_lines)
+             activity_data.append({
+                 "entry_id": test_entry_id,
+                 "order_id": order_id,
+                 "date": display_date,
+                 "order_date_raw": date_str,
+                 "sample_date_raw": sample_date_str,
+                 "patient": patient_name,
+                 "document": doc_text,
+                 "doc_type": doc_type,
+                 "doc_number": doc_number,
+                 "birth_date": birth_date,
+                 "hcl": hcl,
+                 "sex": sex,
+                 "origin": origin,
+                 "is_pregnant": is_pregnant,
+                 "gestational_age_weeks": gest_age_weeks,
+                 "expected_delivery_date": expected_delivery,
+                 "age": age_display,
+                 "age_years": age_years,
+                 "test": test_name,
+                 "result": result_text,
+-                "summary_items": [summary_text],
+-                "summary_text": summary_text,
++                "summary_items": detail_lines,
++                "summary_text": summary_text or result_text,
+                 "has_result": True,
+                 "category": category,
+                 "order_observations": order_obs,
+                 "insurance_type": insurance_type,
+                 "fua_number": fua_number,
+                 "emitted": None,
+                 "emitted_at": None,
+                 "first_name": first,
+                 "last_name": last,
+                 "sample_status": sample_status,
+                 "sample_issue": sample_issue,
+                 "observation": observation
+             })
+         self._activity_cache = {
+             "data": activity_data,
+             "description": description,
+             "start": start_dt,
+             "end": end_dt
+         }
+         if hasattr(self, 'activity_search_input'):
+             self.apply_activity_filter()
+         else:
+             self._render_activity_rows(activity_data, description)
+ 
+     def open_history_from_activity(self, row, column):
+@@ -7090,83 +7100,92 @@ class MainWindow(QMainWindow):
+                 requested_by,
+                 insurance_type,
+                 fua_number,
+                 emitted,
+                 emitted_at,
+                 sample_status,
+                 sample_issue,
+                 observation,
+                 pending_since,
+                 entry_id,
+                 deleted,
+                 deleted_reason
+             ) = row
+             display_date = self._format_date_display(sample_date_str, "-")
+             if display_date == "-":
+                 display_date = self._format_datetime_display(date_str, date_str or "-")
+             patient_name = " ".join(part for part in [(first_name or "").upper(), (patient_last_name or "").upper()] if part).strip() or "-"
+             doc_text = " ".join(part for part in (doc_type, doc_value) if part).strip() or "-"
+             age_display = str(age_years) if age_years not in (None, "") else "-"
+             context = {
+                 "patient": {"sex": sex, "birth_date": birth_date},
+                 "order": {"age_years": age_years}
+             }
+             summary_text = self._build_exam_result_summary(test_name, raw_result, context=context)
+             sample_received = self._is_sample_received_status(sample_status)
+-            has_result = bool(summary_text) or not self._is_blank_result(raw_result)
++            detail_text = self._build_exam_detail_text(
++                test_name,
++                raw_result,
++                context=context,
++                observation=observation,
++                issue=sample_issue,
++                cancel_reason=deleted_reason if deleted else None
++            )
++            detail_lines = [line.strip() for line in detail_text.splitlines() if line.strip()]
++            has_result = bool(detail_lines) or not self._is_blank_result(raw_result)
+             summary_items = []
+-            if summary_text:
+-                summary_items = [f"{test_name}: {summary_text}"]
++            if detail_lines:
++                summary_items = detail_lines
+             elif sample_received:
+-                summary_items = [f"{test_name}: Recibida (pendiente resultado)"]
++                summary_items = ["Recibida (pendiente resultado)"]
+             result_text = "; ".join(summary_items)
+             records.append({
+                 "entry_id": entry_id,
+                 "order_id": order_id,
+                 "date": display_date,
+                 "order_date_raw": date_str,
+                 "sample_date_raw": sample_date_str,
+                 "patient": patient_name,
+                 "document": doc_text,
+                 "doc_type": doc_type,
+                 "doc_number": doc_value,
+                 "birth_date": birth_date,
+                 "hcl": hcl,
+                 "height": height,
+                 "weight": weight,
+                 "blood_pressure": blood_pressure,
+                 "sex": sex,
+                 "origin": origin,
+                 "is_pregnant": is_pregnant,
+                 "gestational_age_weeks": gest_age_weeks,
+                 "expected_delivery_date": expected_delivery,
+                 "age": age_display,
+                 "test": test_name,
+                 "test_id": test_id,
+                 "result": result_text,
+                 "summary_items": summary_items,
+-                "summary_text": summary_text,
++                "summary_text": summary_text or result_text,
+                 "raw_result": raw_result,
+                 "has_result": has_result,
+                 "sample_received": sample_received,
+                 "is_critical": self._detect_critical_result(raw_result, summary_items),
+                 "category": category,
+                 "order_observations": order_obs,
+                 "requested_by": requested_by,
+                 "insurance_type": insurance_type,
+                 "fua_number": fua_number,
+                 "emitted": emitted,
+                 "emitted_at": emitted_at,
+                 "first_name": first_name,
+                 "last_name": patient_last_name,
+                 "sample_status": sample_status,
+                 "sample_issue": sample_issue,
+                 "observation": observation,
+                 "pending_since": pending_since,
+                 "is_cancelled": bool(deleted),
+                 "cancel_reason": deleted_reason
+             })
+         aggregated = self._aggregate_results_by_order(records)
+         self._history_results = aggregated
+         self._populate_history_table_widget(self.history_table, aggregated)
+         if not aggregated:
+             QMessageBox.information(
+ 
+EOF
+)

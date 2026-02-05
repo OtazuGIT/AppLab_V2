@@ -1,0 +1,163 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 9c0ff0323982cef0ad1baec381fdd5020364c6df..3e473a3da3e7f8bd5812a301f4e7a232128e60c4 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -3874,56 +3874,62 @@ class MainWindow(QMainWindow):
+                     "height": record.get("height"),
+                     "weight": record.get("weight"),
+                     "blood_pressure": record.get("blood_pressure"),
+                     "sex": record.get("sex"),
+                     "origin": record.get("origin"),
+                     "is_pregnant": record.get("is_pregnant"),
+                     "gestational_age_weeks": record.get("gestational_age_weeks"),
+                     "expected_delivery_date": record.get("expected_delivery_date"),
+                     "age": record.get("age", ""),
+                     "first_name": record.get("first_name"),
+                     "last_name": record.get("last_name"),
+                     "observations": record.get("order_observations"),
+                     "requested_by": record.get("requested_by"),
+                     "insurance_type": record.get("insurance_type"),
+                     "fua_number": record.get("fua_number"),
+                     "emitted": record.get("emitted"),
+                     "emitted_at": record.get("emitted_at"),
+                     "groups": {key: [] for key in group_keys},
+                     "tests": [],
+                     "sample_statuses": [],
+                     "pending_tests": [],
+                     "test_detail_map": OrderedDict()
+                 }
+                 grouped[order_id] = entry
+             group_key = self._map_category_group(record.get("category"))
++            test_name = record.get("test")
++            test_label = " ".join(str(test_name or "").split()).strip()
+             if has_result:
+                 for item in summary_items:
+                     cleaned = str(item).strip()
+-                    if cleaned:
+-                        entry["groups"].setdefault(group_key, []).append(cleaned)
+-            test_name = record.get("test")
++                    if not cleaned:
++                        continue
++                    if test_label and not cleaned.lower().startswith(f"{test_label.lower()}:"):
++                        grouped_text = f"{test_label}: {cleaned}"
++                    else:
++                        grouped_text = cleaned
++                    entry["groups"].setdefault(group_key, []).append(grouped_text)
+             test_id = record.get("test_id")
+             if test_name:
+                 test_clean = str(test_name).strip()
+                 if test_clean and test_clean not in entry.setdefault("tests", []):
+                     entry["tests"].append(test_clean)
+                 detail_key = test_id if test_id not in (None, "") else test_clean
+                 detail_map = entry.setdefault("test_detail_map", OrderedDict())
+                 detail_entry = detail_map.get(detail_key, {
+                     "test": test_clean,
+                     "test_id": test_id,
+                     "group": group_key,
+                     "summary_items": [],
+                     "summary_text": None,
+                     "has_result": False,
+                     "sample_received": False,
+                     "sample_status": None,
+                     "is_cancelled": False,
+                     "cancel_reason": None,
+                     "is_emitted": False,
+                     "issue": None,
+                     "is_critical": False,
+                     "observation": None,
+                     "raw_result": None,
+                     "pending_since": None,
+                     "order_date_raw": None,
+@@ -6002,75 +6008,85 @@ class MainWindow(QMainWindow):
+             is_pregnant,
+             gest_age_weeks,
+             expected_delivery,
+             age_years,
+             order_obs,
+             insurance_type,
+             fua_number,
+             test_name,
+             category,
+             result,
+             sample_status,
+             sample_issue,
+             observation
+         ) in rows:
+             display_date = self._format_date_display(sample_date_str, "-")
+             if display_date == "-":
+                 display_date = self._format_datetime_display(date_str, date_str or "-")
+             patient_name = " ".join(part for part in [(first or "").upper(), (last or "").upper()] if part).strip() or "-"
+             doc_text = " ".join(part for part in (doc_type, doc_number) if part).strip() or "-"
+             age_display = str(age_years) if age_years not in (None, "") else "-"
+             context = {
+                 "patient": {"sex": sex, "birth_date": birth_date},
+                 "order": {"age_years": age_years}
+             }
+             summary_text = self._build_exam_result_summary(test_name, result, context=context)
+-            if not summary_text:
++            detail_text = self._build_exam_detail_text(
++                test_name,
++                result,
++                context=context,
++                observation=observation,
++                issue=sample_issue
++            )
++            if not summary_text and not detail_text:
+                 continue
+-            result_text = summary_text
++            result_text = detail_text or summary_text
++            summary_items = [line.strip() for line in str(result_text).splitlines() if line.strip()]
++            if not summary_items and summary_text:
++                summary_items = [summary_text]
+             activity_data.append({
+                 "entry_id": test_entry_id,
+                 "order_id": order_id,
+                 "date": display_date,
+                 "order_date_raw": date_str,
+                 "sample_date_raw": sample_date_str,
+                 "patient": patient_name,
+                 "document": doc_text,
+                 "doc_type": doc_type,
+                 "doc_number": doc_number,
+                 "birth_date": birth_date,
+                 "hcl": hcl,
+                 "sex": sex,
+                 "origin": origin,
+                 "is_pregnant": is_pregnant,
+                 "gestational_age_weeks": gest_age_weeks,
+                 "expected_delivery_date": expected_delivery,
+                 "age": age_display,
+                 "age_years": age_years,
+                 "test": test_name,
+                 "result": result_text,
+-                "summary_items": [summary_text],
++                "summary_items": summary_items,
+                 "summary_text": summary_text,
+                 "has_result": True,
+                 "category": category,
+                 "order_observations": order_obs,
+                 "insurance_type": insurance_type,
+                 "fua_number": fua_number,
+                 "emitted": None,
+                 "emitted_at": None,
+                 "first_name": first,
+                 "last_name": last,
+                 "sample_status": sample_status,
+                 "sample_issue": sample_issue,
+                 "observation": observation
+             })
+         self._activity_cache = {
+             "data": activity_data,
+             "description": description,
+             "start": start_dt,
+             "end": end_dt
+         }
+         if hasattr(self, 'activity_search_input'):
+             self.apply_activity_filter()
+         else:
+             self._render_activity_rows(activity_data, description)
+ 
+ 
+EOF
+)
