@@ -3896,12 +3896,18 @@ class MainWindow(QMainWindow):
                 }
                 grouped[order_id] = entry
             group_key = self._map_category_group(record.get("category"))
+            test_name = record.get("test")
+            test_label = " ".join(str(test_name or "").split()).strip()
             if has_result:
                 for item in summary_items:
                     cleaned = str(item).strip()
-                    if cleaned:
-                        entry["groups"].setdefault(group_key, []).append(cleaned)
-            test_name = record.get("test")
+                    if not cleaned:
+                        continue
+                    if test_label:
+                        grouped_text = f"{test_label}: {cleaned}"
+                    else:
+                        grouped_text = cleaned
+                    entry["groups"].setdefault(group_key, []).append(grouped_text)
             test_id = record.get("test_id")
             if test_name:
                 test_clean = str(test_name).strip()

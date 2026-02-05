@@ -1,0 +1,196 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/database.py b/database.py
+index 2020cabda147350612656c6ba08e06887af6bcde..438c19821fc15125d12dc849b466e6270cea404e 100644
+--- a/database.py
++++ b/database.py
+@@ -1,49 +1,53 @@
+ # database.py
+ import datetime
+ import json
+ import sqlite3
+ from collections import OrderedDict
+ class LabDB:
+     def __init__(self, db_path="lab_db.sqlite"):
+         self.db_path = db_path
+         self.conn = None
+         self.cur = None
+         self.test_map = {}
+         self.referential_tests = {
+             "BK (resultado referencial)",
+             "Serología Dengue (referencial)",
+             "Serología Leptospira (referencial)",
+             "Serología Leishmaniasis (referencial)",
+         }
+         self._referential_lookup = {name.lower().strip() for name in self.referential_tests}
+     def connect(self):
+         self.conn = sqlite3.connect(self.db_path)
+         self.cur = self.conn.cursor()
+         self.cur.execute("PRAGMA foreign_keys = ON")
+         self.conn.commit()
+ 
++    def _table_has_column(self, table_name, column_name):
++        self.cur.execute(f"PRAGMA table_info({table_name})")
++        return any(col[1] == column_name for col in self.cur.fetchall())
++
+     def _is_referential_test(self, test_name):
+         if not test_name:
+             return False
+         return test_name.strip().lower() in self._referential_lookup
+ 
+     def _resolve_test_id(self, test_name):
+         if not test_name:
+             return None
+         raw_name = test_name
+         normalized = test_name.strip()
+         for candidate in (raw_name, normalized):
+             if candidate in self.test_map:
+                 return self.test_map[candidate]
+         if not normalized:
+             return None
+         self.cur.execute("SELECT id, name FROM tests WHERE name=?", (normalized,))
+         row = self.cur.fetchone()
+         if not row:
+             self.cur.execute("SELECT id, name FROM tests WHERE LOWER(name)=LOWER(?)", (normalized,))
+             row = self.cur.fetchone()
+         if row:
+             test_id, db_name = row
+             self.test_map[db_name] = test_id
+             if normalized != db_name:
+                 self.test_map[normalized] = test_id
+@@ -664,108 +668,120 @@ class LabDB:
+          date, sample_date, obs, req_by, diag, insurance_type, fua_number, age_years, emitted, emitted_at) = header
+         patient_info = {
+             "name": f"{(first_name or '').upper()} {(last_name or '').upper()}".strip(),
+             "doc_type": doc_type,
+             "doc_number": doc_number,
+             "birth_date": birth_date,
+             "sex": sex,
+             "origin": origin,
+             "hcl": hcl,
+             "is_pregnant": bool(is_pregnant) if is_pregnant not in (None, "") else False,
+             "gestational_age_weeks": gest_age_weeks,
+             "expected_delivery_date": expected_delivery
+         }
+         order_info = {
+             "date": date,
+             "sample_date": sample_date,
+             "observations": obs,
+             "requested_by": req_by,
+             "diagnosis": diag,
+             "insurance_type": insurance_type,
+             "fua_number": fua_number,
+             "age_years": age_years,
+             "emitted": emitted,
+             "emitted_at": emitted_at,
+         }
+-        self.cur.execute("""
+-            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.sample_type, ot.id, ot.pending_since
++        has_sample_type = self._table_has_column("order_tests", "sample_type")
++        has_pending_since = self._table_has_column("order_tests", "pending_since")
++        sample_type_sql = "ot.sample_type" if has_sample_type else "NULL AS sample_type"
++        pending_since_sql = "ot.pending_since" if has_pending_since else "NULL AS pending_since"
++        self.cur.execute(f"""
++            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation,
++                   {sample_type_sql}, ot.id, {pending_since_sql}
+             FROM order_tests ot
+             JOIN tests t ON ot.test_id = t.id
+             WHERE ot.order_id = ?
+               AND (ot.deleted IS NULL OR ot.deleted=0)
+             ORDER BY ot.id ASC
+         """, (order_id,))
+         results = self.cur.fetchall()
+         return {"patient": patient_info, "order": order_info, "results": results}
+     def save_results(self, order_id, results_dict):
++        has_sample_type = self._table_has_column("order_tests", "sample_type")
++        has_pending_since = self._table_has_column("order_tests", "pending_since")
+         for name, payload in results_dict.items():
+             if name not in self.test_map:
+                 continue
+             tid = self.test_map[name]
+             result_value = payload
+             sample_status = None
+             sample_issue = None
+             observation = None
+             sample_type = None
+             if isinstance(payload, dict) and "result" in payload:
+                 result_value = payload.get("result")
+                 sample_status = payload.get("sample_status")
+                 sample_issue = payload.get("sample_issue")
+                 observation = payload.get("observation")
+                 sample_type = payload.get("sample_type")
+                 pending_since = payload.get("pending_since")
+             else:
+                 pending_since = None
+             if isinstance(result_value, dict):
+                 stored = json.dumps(result_value, ensure_ascii=False)
+             else:
+                 stored = result_value
+             if sample_status is None:
+                 sample_status = "recibida"
+             if sample_issue is None:
+                 sample_issue = ""
+             if observation is None:
+                 observation = ""
+             if sample_type is not None:
+                 sample_type = str(sample_type).strip()
+             if sample_status != "pendiente":
+                 pending_since = None
+             else:
+                 if not pending_since:
+                     pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
++            update_fields = [
++                "result=?",
++                "sample_status=?",
++                "sample_issue=?",
++                "observation=?"
++            ]
++            params = [stored, sample_status, sample_issue, observation]
++            if has_sample_type:
++                update_fields.append("sample_type=?")
++                params.append(sample_type)
++            if has_pending_since:
++                update_fields.append("pending_since=?")
++                params.append(pending_since)
++            params.extend([order_id, tid])
+             self.cur.execute(
+-                """
+-                UPDATE order_tests
+-                SET result=?,
+-                    sample_status=?,
+-                    sample_issue=?,
+-                    observation=?,
+-                    sample_type=?,
+-                    pending_since=?
+-                WHERE order_id=? AND test_id=?
+-                """,
+-                (stored, sample_status, sample_issue, observation, sample_type, pending_since, order_id, tid)
++                f"UPDATE order_tests SET {', '.join(update_fields)} WHERE order_id=? AND test_id=?",
++                tuple(params)
+             )
+         return self._update_order_completion(order_id)
+ 
+     def ensure_followup_order_for_pending(self, source_order_id, pending_tests, user_id):
+         if not source_order_id or not pending_tests or not user_id:
+             return (None, None)
+         self.cur.execute(
+             """
+             SELECT patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years
+             FROM orders
+             WHERE id=? AND (deleted IS NULL OR deleted=0)
+             """,
+             (source_order_id,)
+         )
+         row = self.cur.fetchone()
+         if not row:
+             return (None, None)
+         patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years = row
+         normalized_tests = []
+         for entry in pending_tests:
+             if isinstance(entry, dict):
+                 name = entry.get("name")
+                 issue = (entry.get("issue") or "").strip()
+             else:
+                 name = entry
+ 
+EOF
+)

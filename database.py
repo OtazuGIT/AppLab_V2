@@ -22,6 +22,10 @@ class LabDB:
         self.cur.execute("PRAGMA foreign_keys = ON")
         self.conn.commit()
 
+    def _table_has_column(self, table_name, column_name):
+        self.cur.execute(f"PRAGMA table_info({table_name})")
+        return any(col[1] == column_name for col in self.cur.fetchall())
+
     def _is_referential_test(self, test_name):
         if not test_name:
             return False
@@ -686,8 +690,13 @@ class LabDB:
             "emitted": emitted,
             "emitted_at": emitted_at,
         }
-        self.cur.execute("""
-            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.sample_type, ot.id, ot.pending_since
+        has_sample_type = self._table_has_column("order_tests", "sample_type")
+        has_pending_since = self._table_has_column("order_tests", "pending_since")
+        sample_type_sql = "ot.sample_type" if has_sample_type else "NULL AS sample_type"
+        pending_since_sql = "ot.pending_since" if has_pending_since else "NULL AS pending_since"
+        self.cur.execute(f"""
+            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation,
+                   {sample_type_sql}, ot.id, {pending_since_sql}
             FROM order_tests ot
             JOIN tests t ON ot.test_id = t.id
             WHERE ot.order_id = ?
@@ -697,6 +706,8 @@ class LabDB:
         results = self.cur.fetchall()
         return {"patient": patient_info, "order": order_info, "results": results}
     def save_results(self, order_id, results_dict):
+        has_sample_type = self._table_has_column("order_tests", "sample_type")
+        has_pending_since = self._table_has_column("order_tests", "pending_since")
         for name, payload in results_dict.items():
             if name not in self.test_map:
                 continue
@@ -732,18 +743,23 @@ class LabDB:
             else:
                 if not pending_since:
                     pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            update_fields = [
+                "result=?",
+                "sample_status=?",
+                "sample_issue=?",
+                "observation=?"
+            ]
+            params = [stored, sample_status, sample_issue, observation]
+            if has_sample_type:
+                update_fields.append("sample_type=?")
+                params.append(sample_type)
+            if has_pending_since:
+                update_fields.append("pending_since=?")
+                params.append(pending_since)
+            params.extend([order_id, tid])
             self.cur.execute(
-                """
-                UPDATE order_tests
-                SET result=?,
-                    sample_status=?,
-                    sample_issue=?,
-                    observation=?,
-                    sample_type=?,
-                    pending_since=?
-                WHERE order_id=? AND test_id=?
-                """,
-                (stored, sample_status, sample_issue, observation, sample_type, pending_since, order_id, tid)
+                f"UPDATE order_tests SET {', '.join(update_fields)} WHERE order_id=? AND test_id=?",
+                tuple(params)
             )
         return self._update_order_completion(order_id)
 

@@ -1,0 +1,74 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 9c0ff0323982cef0ad1baec381fdd5020364c6df..59b5926afc25a7742855f66d54fda29feb63bbcf 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -3874,56 +3874,62 @@ class MainWindow(QMainWindow):
+                     "height": record.get("height"),
+                     "weight": record.get("weight"),
+                     "blood_pressure": record.get("blood_pressure"),
+                     "sex": record.get("sex"),
+                     "origin": record.get("origin"),
+                     "is_pregnant": record.get("is_pregnant"),
+                     "gestational_age_weeks": record.get("gestational_age_weeks"),
+                     "expected_delivery_date": record.get("expected_delivery_date"),
+                     "age": record.get("age", ""),
+                     "first_name": record.get("first_name"),
+                     "last_name": record.get("last_name"),
+                     "observations": record.get("order_observations"),
+                     "requested_by": record.get("requested_by"),
+                     "insurance_type": record.get("insurance_type"),
+                     "fua_number": record.get("fua_number"),
+                     "emitted": record.get("emitted"),
+                     "emitted_at": record.get("emitted_at"),
+                     "groups": {key: [] for key in group_keys},
+                     "tests": [],
+                     "sample_statuses": [],
+                     "pending_tests": [],
+                     "test_detail_map": OrderedDict()
+                 }
+                 grouped[order_id] = entry
+             group_key = self._map_category_group(record.get("category"))
++            test_name = record.get("test")
++            test_label = " ".join(str(test_name or "").split()).strip()
+             if has_result:
+                 for item in summary_items:
+                     cleaned = str(item).strip()
+-                    if cleaned:
+-                        entry["groups"].setdefault(group_key, []).append(cleaned)
+-            test_name = record.get("test")
++                    if not cleaned:
++                        continue
++                    if test_label:
++                        grouped_text = f"{test_label}: {cleaned}"
++                    else:
++                        grouped_text = cleaned
++                    entry["groups"].setdefault(group_key, []).append(grouped_text)
+             test_id = record.get("test_id")
+             if test_name:
+                 test_clean = str(test_name).strip()
+                 if test_clean and test_clean not in entry.setdefault("tests", []):
+                     entry["tests"].append(test_clean)
+                 detail_key = test_id if test_id not in (None, "") else test_clean
+                 detail_map = entry.setdefault("test_detail_map", OrderedDict())
+                 detail_entry = detail_map.get(detail_key, {
+                     "test": test_clean,
+                     "test_id": test_id,
+                     "group": group_key,
+                     "summary_items": [],
+                     "summary_text": None,
+                     "has_result": False,
+                     "sample_received": False,
+                     "sample_status": None,
+                     "is_cancelled": False,
+                     "cancel_reason": None,
+                     "is_emitted": False,
+                     "issue": None,
+                     "is_critical": False,
+                     "observation": None,
+                     "raw_result": None,
+                     "pending_since": None,
+                     "order_date_raw": None,
+ 
+EOF
+)
