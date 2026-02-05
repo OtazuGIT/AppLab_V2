@@ -21,6 +21,15 @@ from openpyxl import Workbook
 
 LAB_TITLE = "Laboratorio P.S. Iñapari - 002789"
 
+SAMPLE_TYPE_DEFAULTS = {
+    "examen completo de orina": "Orina de chorro medio",
+    "examen general de orina": "Orina de chorro medio",
+    "sedimento urinario": "Orina de chorro medio",
+    "urocultivo": "Orina de chorro medio",
+    "secrecion vaginal": "Secreción vaginal",
+    "secrecion (otros sitios)": "Secreción"
+}
+
 MONTH_NAMES_ES = [
     "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"
@@ -2759,6 +2768,7 @@ class MainWindow(QMainWindow):
                 sample_status,
                 sample_issue,
                 observation,
+                sample_type,
                 _entry_id,
                 pending_since
             ) = entry
@@ -2813,6 +2823,12 @@ class MainWindow(QMainWindow):
             observation_edit.setPlaceholderText("Observaciones de la muestra (opcional)")
             if observation:
                 observation_edit.setPlainText(str(observation))
+            sample_type_input = QLineEdit()
+            sample_type_input.setPlaceholderText("Tipo de muestra")
+            resolved_sample_type = (sample_type or "").strip() if isinstance(sample_type, str) else ""
+            if not resolved_sample_type:
+                resolved_sample_type = self._default_sample_type_for_test(test_name)
+            sample_type_input.setText(resolved_sample_type)
             remove_button = QPushButton("Quitar examen")
             remove_button.setStyleSheet("QPushButton { font-size: 10px; color: #c0392b; }")
             remove_button.clicked.connect(lambda _=False, name=test_name: self._prompt_remove_test(name))
@@ -2866,11 +2882,13 @@ class MainWindow(QMainWindow):
                         }
                     }
                 }
+            group_layout.addRow("Tipo de muestra:", sample_type_input)
             group_layout.addRow("Obs. de la muestra:", observation_edit)
             meta_info = {
                 "status_widget": status_combo,
                 "issue_widget": issue_input,
                 "observation_widget": observation_edit,
+                "sample_type_widget": sample_type_input,
                 "initial_status": status_value,
                 "pending_since": pending_since,
                 "pending_label": pending_since_label,
@@ -2956,6 +2974,7 @@ class MainWindow(QMainWindow):
             status_combo = meta.get("status_widget")
             issue_widget = meta.get("issue_widget")
             observation_widget = meta.get("observation_widget")
+            sample_type_widget = meta.get("sample_type_widget")
             pending_since_value = meta.get("pending_since")
             status_value = "recibida"
             if status_combo:
@@ -2966,6 +2985,9 @@ class MainWindow(QMainWindow):
                     status_value = status_combo.currentText().strip().lower() or "recibida"
             issue_value = issue_widget.text().strip() if issue_widget else ""
             observation_value = observation_widget.toPlainText().strip() if observation_widget else ""
+            sample_type_value = sample_type_widget.text().strip() if sample_type_widget else ""
+            if not sample_type_value:
+                sample_type_value = self._default_sample_type_for_test(test_name)
             if status_value == "pendiente":
                 pending_samples += 1
                 pending_tests.append({
@@ -2999,6 +3021,7 @@ class MainWindow(QMainWindow):
                 "sample_status": status_value,
                 "sample_issue": issue_value,
                 "observation": observation_value,
+                "sample_type": sample_type_value,
                 "pending_since": pending_since_value
             }
         if has_empty:
@@ -4175,8 +4198,63 @@ class MainWindow(QMainWindow):
                     age_value = bd.daysTo(QDate.currentDate()) // 365
         return age_value
     def _format_age_text(self, patient_info, order_info):
-        age_value = self._calculate_age_years(patient_info, order_info)
+        age_value = self._calculate_age_years_float(patient_info, order_info)
         return f"{age_value} años" if age_value is not None else "-"
+
+    def _calculate_age_years_float(self, patient_info, order_info):
+        age_value = self._calculate_age_years(patient_info, order_info)
+        if age_value is not None:
+            try:
+                return float(age_value)
+            except (TypeError, ValueError):
+                pass
+        birth_date = patient_info.get('birth_date') if isinstance(patient_info, dict) else None
+        order_date = order_info.get('date') if isinstance(order_info, dict) else None
+        if not birth_date:
+            return None
+        try:
+            birth_dt = datetime.datetime.strptime(str(birth_date), "%Y-%m-%d")
+            if order_date:
+                try:
+                    ref_dt = datetime.datetime.strptime(str(order_date), "%Y-%m-%d %H:%M:%S")
+                except Exception:
+                    ref_dt = datetime.datetime.now()
+            else:
+                ref_dt = datetime.datetime.now()
+            days = (ref_dt.date() - birth_dt.date()).days
+            if days < 0:
+                return None
+            return days / 365.25
+        except Exception:
+            return None
+
+    def get_reference(self, test_name, age_years, sex, is_pregnant):
+        field_ref = None
+        if test_name and isinstance(test_name, str):
+            template = TEST_TEMPLATES.get(test_name)
+            if template and isinstance(template.get("fields"), list):
+                for field_def in template.get("fields", []):
+                    if field_def.get("reference"):
+                        field_ref = field_def.get("reference")
+                        break
+            elif "\n" in test_name or "|" in test_name:
+                field_ref = test_name
+        if not field_ref:
+            return "-"
+        ctx = {
+            "patient": {"sex": sex, "is_pregnant": is_pregnant},
+            "order": {"age_years": age_years}
+        }
+        return self._filter_reference_for_context(field_ref, ctx)
+
+    def _default_sample_type_for_test(self, test_name):
+        normalized = self._normalize_text(test_name)
+        for key, default_value in SAMPLE_TYPE_DEFAULTS.items():
+            if key in normalized:
+                return default_value
+        if "orina" in normalized or "ego" in normalized:
+            return "Orina de chorro medio"
+        return "Muestra estándar"
 
     def _get_field_reference(self, field_def, context=None):
         if not field_def:
@@ -4185,7 +4263,12 @@ class MainWindow(QMainWindow):
         if not reference:
             return reference
         effective_context = context or self.current_order_context
-        return self._filter_reference_for_context(reference, effective_context)
+        patient_info = effective_context.get("patient", {}) if isinstance(effective_context, dict) else {}
+        order_info = effective_context.get("order", {}) if isinstance(effective_context, dict) else {}
+        age_value = self._calculate_age_years_float(patient_info, order_info)
+        sex_text = patient_info.get("sex", "")
+        is_pregnant = self._normalize_bool(patient_info.get("is_pregnant"))
+        return self.get_reference(reference, age_value, sex_text, is_pregnant)
 
     def _filter_reference_for_context(self, reference, context):
         if not reference or not isinstance(reference, str):
@@ -4196,20 +4279,33 @@ class MainWindow(QMainWindow):
         order_info = context.get("order", {}) if isinstance(context, dict) else {}
         age_value = self._calculate_age_years(patient_info, order_info)
         sex_text = self._normalize_text(patient_info.get("sex", ""))
+        is_pregnant = self._normalize_bool(patient_info.get("is_pregnant"))
         segments = self._split_reference_segments(reference)
         applicable = []
+        sex_only_matches = []
+        group_only_matches = []
         general_segments = []
         for segment in segments:
             classification = self._classify_reference_segment(segment)
-            if self._segment_matches_context(classification, age_value, sex_text):
-                applicable.append(segment.strip())
-            elif not classification['groups'] and not classification['sexes']:
-                general_segments.append(segment.strip())
+            cleaned_segment = segment.strip()
+            if self._segment_matches_context(classification, age_value, sex_text, is_pregnant):
+                applicable.append(cleaned_segment)
+                continue
+            if self._segment_matches_sex(classification.get('sexes', set()), sex_text):
+                sex_only_matches.append(cleaned_segment)
+            if self._segment_matches_group_only(classification, age_value, is_pregnant):
+                group_only_matches.append(cleaned_segment)
+            if not classification['groups'] and not classification['sexes']:
+                general_segments.append(cleaned_segment)
         if applicable:
-            return "\n".join(applicable)
+            return applicable[0]
+        if sex_only_matches:
+            return sex_only_matches[0]
+        if group_only_matches:
+            return group_only_matches[0]
         if general_segments:
-            return "\n".join(general_segments)
-        return reference
+            return general_segments[0]
+        return segments[0].strip() if segments else reference
 
     def _split_reference_segments(self, reference_text):
         segments = []
@@ -4248,6 +4344,7 @@ class MainWindow(QMainWindow):
         if "gestant" in normalized or "embaraz" in normalized:
             sexes.add('female')
             groups.add('adult')
+            groups.add('pregnant')
         for match in re.finditer(r'(\d+)\s*[-–]\s*(\d+)\s*(?:anos|ano|a)', normalized):
             start = int(match.group(1))
             end = int(match.group(2))
@@ -4287,7 +4384,7 @@ class MainWindow(QMainWindow):
         else:
             groups.update({'child', 'adult'})
 
-    def _segment_matches_context(self, classification, age_value, normalized_sex):
+    def _segment_matches_context(self, classification, age_value, normalized_sex, is_pregnant=False):
         groups = classification.get('groups', set())
         sexes = classification.get('sexes', set())
         ranges = classification.get('ranges', [])
@@ -4303,9 +4400,32 @@ class MainWindow(QMainWindow):
             target_groups.add('child')
         if age_value >= 18:
             target_groups.add('adult')
+        if 'pregnant' in groups and not is_pregnant:
+            return False
         if groups and not groups.intersection(target_groups):
             return False
         return self._segment_matches_sex(sexes, normalized_sex)
+
+    def _segment_matches_group_only(self, classification, age_value, is_pregnant=False):
+        groups = classification.get('groups', set())
+        if not groups:
+            return False
+        target_groups = set()
+        if age_value is None:
+            target_groups.update({'child', 'adult', 'newborn'})
+        else:
+            if age_value <= 0:
+                target_groups.add('newborn')
+            if age_value < 18:
+                target_groups.add('child')
+            if age_value >= 18:
+                target_groups.add('adult')
+        if 'pregnant' in groups and not is_pregnant:
+            return False
+        non_preg_groups = {g for g in groups if g != 'pregnant'}
+        if non_preg_groups and not non_preg_groups.intersection(target_groups):
+            return False
+        return True
 
     def _age_in_range(self, age_value, start, end):
         if start is None and end is None:
@@ -4659,7 +4779,7 @@ class MainWindow(QMainWindow):
         sample_display = self._format_date_display(sample_raw, "-")
         lines.append(f"FECHA DE TOMA DE MUESTRA: {sample_display}")
         lines.append("RESULTADOS:")
-        for test_name, raw_result, _, sample_status, sample_issue, observation, _, pending_since in results:
+        for test_name, raw_result, _, sample_status, sample_issue, observation, sample_type, _, pending_since in results:
             formatted_lines = self._format_result_lines(test_name, raw_result, context=context)
             if formatted_lines:
                 lines.extend(formatted_lines)
@@ -5079,7 +5199,7 @@ class MainWindow(QMainWindow):
             pdf.set_text_color(0, 0, 0)
             pdf.ln(1.2)
 
-        for test_name, raw_result, _, sample_status, sample_issue, observation, _, pending_since in results:
+        for test_name, raw_result, _, sample_status, sample_issue, observation, sample_type, _, pending_since in results:
             structure = self._extract_result_structure(test_name, raw_result, context=context)
             if structure.get("type") == "structured":
                 items = structure.get("items", [])
@@ -5103,9 +5223,21 @@ class MainWindow(QMainWindow):
 
             ensure_test_block_space(required_height)
             draw_test_header(test_name)
+            sample_text = (sample_type or "").strip() if isinstance(sample_type, str) else ""
+            if not sample_text:
+                sample_text = self._default_sample_type_for_test(test_name)
+            ensure_space(4.8)
+            pdf.set_font("Arial", 'B', 6.9)
+            pdf.set_text_color(67, 91, 114)
+            pdf.cell(0, 3.8, self._ensure_latin1(f"MUESTRA: {sample_text}"), ln=1)
+            pdf.set_text_color(0, 0, 0)
 
             def on_new_page():
                 draw_test_header(test_name)
+                pdf.set_font("Arial", 'B', 6.9)
+                pdf.set_text_color(67, 91, 114)
+                pdf.cell(0, 3.8, self._ensure_latin1(f"MUESTRA: {sample_text}"), ln=1)
+                pdf.set_text_color(0, 0, 0)
 
             if structure.get("type") == "structured":
                 render_table_header(column_widths, on_new_page)

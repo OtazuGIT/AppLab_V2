@@ -11,7 +11,8 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import QDateTime, Qt, QTimer
 
-LAB_TITLE = "Laboratorio P.S. Iñapari - 002789"
+LAB_TITLE = "LABORATORIO CLÍNICO"
+LAB_SUBTITLE = "P.S. IÑAPARI – Código 002789"
 
 class LoginDialog(QDialog):
     def __init__(self, labdb):
@@ -30,38 +31,45 @@ class LoginDialog(QDialog):
         self.setStyleSheet(
             """
             QDialog#LoginDialog {
-                background-color: #e8f0f7;
+                background-color: #edf3fa;
             }
             QFrame#LoginCard {
                 background-color: #ffffff;
-                border-radius: 18px;
-                border: 1px solid #d0dceb;
+                border-radius: 14px;
+                border: 1px solid #cfdae9;
             }
             QFrame#LoginCard QLabel {
                 color: #1f2d3d;
             }
             QLabel#LoginTitle {
-                font-size: 20px;
+                font-size: 28px;
                 font-weight: 700;
+                letter-spacing: 1px;
             }
             QLabel#LoginSubtitle {
-                font-size: 13px;
-                color: #52606d;
+                font-size: 14px;
+                color: #47627f;
+            }
+            QLabel#FieldLabel {
+                font-size: 12px;
+                font-weight: 600;
+                color: #2d4a68;
             }
             QLineEdit {
-                border: 1px solid #c2d0e4;
-                border-radius: 8px;
-                padding: 10px 12px;
-                background-color: #f9fbff;
+                border: 1px solid #b9cbe2;
+                border-radius: 7px;
+                padding: 9px 11px;
+                background-color: #f7faff;
+                min-height: 20px;
             }
             QLineEdit:focus {
-                border-color: #3584e4;
+                border-color: #2269b3;
                 background-color: #ffffff;
             }
             QPushButton#LoginButton {
                 background-color: #1E8449;
                 color: white;
-                border-radius: 10px;
+                border-radius: 8px;
                 padding: 12px 18px;
                 font-weight: 600;
             }
@@ -69,22 +77,22 @@ class LoginDialog(QDialog):
                 background-color: #176b3a;
             }
             QLabel#LoginClock {
-                font-size: 18px;
-                color: #0a84ff;
+                font-size: 11px;
+                color: #6f86a1;
             }
             """
         )
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(80, 60, 80, 60)
+        outer_layout.setContentsMargins(64, 52, 64, 52)
         outer_layout.setSpacing(0)
         outer_layout.addStretch()
 
         card = QFrame()
         card.setObjectName("LoginCard")
-        card.setMaximumWidth(460)
+        card.setMaximumWidth(500)
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(40, 32, 40, 32)
-        card_layout.setSpacing(24)
+        card_layout.setContentsMargins(42, 30, 42, 28)
+        card_layout.setSpacing(18)
 
         title = QLabel(LAB_TITLE)
         title.setObjectName("LoginTitle")
@@ -92,26 +100,29 @@ class LoginDialog(QDialog):
         title.setWordWrap(True)
         card_layout.addWidget(title)
 
-        subtitle = QLabel("Sistema de gestión de laboratorio")
+        subtitle = QLabel(LAB_SUBTITLE)
         subtitle.setObjectName("LoginSubtitle")
         subtitle.setAlignment(Qt.AlignCenter)
         subtitle.setWordWrap(True)
         card_layout.addWidget(subtitle)
 
         form_layout = QGridLayout()
-        form_layout.setVerticalSpacing(14)
-        form_layout.setHorizontalSpacing(12)
-        label_user = QLabel("Usuario:")
+        form_layout.setVerticalSpacing(8)
+        form_layout.setHorizontalSpacing(8)
+        label_user = QLabel("Usuario")
+        label_user.setObjectName("FieldLabel")
         self.input_user = QLineEdit()
         self.input_user.setPlaceholderText("Ingrese su usuario")
-        label_pass = QLabel("Contraseña:")
+        self.input_user.setMinimumWidth(360)
+        label_pass = QLabel("Contraseña")
+        label_pass.setObjectName("FieldLabel")
         self.input_pass = QLineEdit()
         self.input_pass.setEchoMode(QLineEdit.Password)
         self.input_pass.setPlaceholderText("Ingrese su contraseña")
         form_layout.addWidget(label_user, 0, 0)
-        form_layout.addWidget(self.input_user, 0, 1)
-        form_layout.addWidget(label_pass, 1, 0)
-        form_layout.addWidget(self.input_pass, 1, 1)
+        form_layout.addWidget(self.input_user, 1, 0)
+        form_layout.addWidget(label_pass, 2, 0)
+        form_layout.addWidget(self.input_pass, 3, 0)
         card_layout.addLayout(form_layout)
 
         btn_login = QPushButton("Ingresar")
@@ -123,8 +134,8 @@ class LoginDialog(QDialog):
         # Reloj en vivo
         self.lbl_time = QLabel("", self)
         self.lbl_time.setObjectName("LoginClock")
-        self.lbl_time.setAlignment(Qt.AlignCenter)
-        card_layout.addWidget(self.lbl_time)
+        self.lbl_time.setAlignment(Qt.AlignRight)
+        card_layout.addWidget(self.lbl_time, alignment=Qt.AlignRight)
 
         outer_layout.addWidget(card, alignment=Qt.AlignHCenter)
         outer_layout.addStretch()

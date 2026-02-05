@@ -1,0 +1,222 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/database.py b/database.py
+index beebaa1aa73ff852a84fb477ef40dc8c3237d61f..2020cabda147350612656c6ba08e06887af6bcde 100644
+--- a/database.py
++++ b/database.py
+@@ -109,50 +109,51 @@ class LabDB:
+         """)
+         # Asegurarse de que columnas nuevas existan para bases de datos creadas anteriormente
+         self._ensure_column_exists("orders", "diagnosis", "TEXT", default_value="")
+         self._ensure_column_exists("orders", "insurance_type", "TEXT", default_value="SIS")
+         self._ensure_column_exists("orders", "fua_number", "TEXT")
+         self._ensure_column_exists("orders", "age_years", "INTEGER")
+         self._ensure_column_exists("orders", "sample_date", "TEXT")
+         self._ensure_column_exists("orders", "emitted", "INTEGER", default_value="0")
+         self._ensure_column_exists("orders", "emitted_at", "TEXT")
+         self._ensure_column_exists("orders", "deleted", "INTEGER", default_value="0")
+         self._ensure_column_exists("orders", "deleted_reason", "TEXT")
+         self._ensure_column_exists("orders", "deleted_by", "INTEGER")
+         self._ensure_column_exists("orders", "deleted_at", "TEXT")
+         self._ensure_column_exists("patients", "is_pregnant", "INTEGER", default_value="0")
+         self._ensure_column_exists("patients", "gestational_age_weeks", "INTEGER")
+         self._ensure_column_exists("patients", "expected_delivery_date", "TEXT")
+         self.cur.execute("""
+             CREATE TABLE IF NOT EXISTS order_tests (
+                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                 order_id INTEGER,
+                 test_id INTEGER,
+                 result TEXT,
+                 sample_status TEXT DEFAULT 'recibida',
+                 sample_issue TEXT,
+                 observation TEXT,
++                sample_type TEXT,
+                 deleted INTEGER DEFAULT 0,
+                 deleted_reason TEXT,
+                 deleted_by INTEGER,
+                 deleted_at TEXT,
+                 FOREIGN KEY(order_id) REFERENCES orders(id),
+                 FOREIGN KEY(test_id) REFERENCES tests(id)
+             )
+         """)
+         self.cur.execute("""
+             CREATE TABLE IF NOT EXISTS app_settings (
+                 key TEXT PRIMARY KEY,
+                 value TEXT
+             )
+         """)
+         self.conn.commit()
+         # Datos iniciales por defecto
+         self.cur.execute("SELECT COUNT(*) FROM users")
+         if self.cur.fetchone()[0] == 0:
+             # Crear usuario admin por defecto
+             self.cur.execute(
+                 "INSERT INTO users(username, password, role, full_name, profession, license) VALUES (?,?,?,?,?,?)",
+                 ("admin", "admin", "super", "Kewin Otazu Mamani", "Biólogo", "C.B.P. 18165")
+             )
+             self.conn.commit()
+         else:
+@@ -255,50 +256,51 @@ class LabDB:
+             "HCG (Prueba de embarazo en orina)",
+             "BHCG (Prueba de embarazo en sangre)"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de secreción vaginal",
+             "Secreción vaginal"
+         )
+         self._ensure_test_renamed(
+             "Cultivo de otras secreciones",
+             "Secreción (otros sitios)"
+         )
+         self._ensure_test_exists("Secreción vaginal", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Secreción (otros sitios)", "MICROBIOLOGÍA")
+         self._ensure_test_exists("Hemoglobina - Hematocrito", "HEMATOLOGÍA")
+         self._ensure_test_exists("Parasitológico seriado", "PARASITOLOGÍA")
+         for referential_test in self.referential_tests:
+             self._ensure_test_exists(referential_test, "LABORATORIO REFERENCIAL")
+         # Cargar mapa de pruebas (nombre -> id)
+         self.cur.execute("SELECT id, name FROM tests")
+         for tid, name in self.cur.fetchall():
+             self.test_map[name] = tid
+         # Ajustar columnas agregadas posteriormente
+         self._ensure_column_exists("order_tests", "sample_status", "TEXT", default_value="recibida")
+         self._ensure_column_exists("order_tests", "sample_issue", "TEXT")
+         self._ensure_column_exists("order_tests", "observation", "TEXT")
++        self._ensure_column_exists("order_tests", "sample_type", "TEXT")
+         self._ensure_column_exists("order_tests", "pending_since", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted", "INTEGER", default_value="0")
+         self._ensure_column_exists("order_tests", "deleted_reason", "TEXT")
+         self._ensure_column_exists("order_tests", "deleted_by", "INTEGER")
+         self._ensure_column_exists("order_tests", "deleted_at", "TEXT")
+     def authenticate_user(self, username, password):
+         self.cur.execute(
+             "SELECT id, username, role, full_name, profession, license FROM users WHERE username=? AND password=?",
+             (username, password)
+         )
+         row = self.cur.fetchone()
+         if row:
+             uid, user, role, full_name, profession, license = row
+             return {
+                 "id": uid,
+                 "username": user,
+                 "role": role,
+                 "full_name": full_name or "",
+                 "profession": profession or "",
+                 "license": license or ""
+             }
+         else:
+             return None
+     def create_user(self, username, password, role, full_name="", profession="", license=""):
+         try:
+@@ -663,102 +665,107 @@ class LabDB:
+         patient_info = {
+             "name": f"{(first_name or '').upper()} {(last_name or '').upper()}".strip(),
+             "doc_type": doc_type,
+             "doc_number": doc_number,
+             "birth_date": birth_date,
+             "sex": sex,
+             "origin": origin,
+             "hcl": hcl,
+             "is_pregnant": bool(is_pregnant) if is_pregnant not in (None, "") else False,
+             "gestational_age_weeks": gest_age_weeks,
+             "expected_delivery_date": expected_delivery
+         }
+         order_info = {
+             "date": date,
+             "sample_date": sample_date,
+             "observations": obs,
+             "requested_by": req_by,
+             "diagnosis": diag,
+             "insurance_type": insurance_type,
+             "fua_number": fua_number,
+             "age_years": age_years,
+             "emitted": emitted,
+             "emitted_at": emitted_at,
+         }
+         self.cur.execute("""
+-            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.id, ot.pending_since
++            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.sample_type, ot.id, ot.pending_since
+             FROM order_tests ot
+             JOIN tests t ON ot.test_id = t.id
+             WHERE ot.order_id = ?
+               AND (ot.deleted IS NULL OR ot.deleted=0)
+             ORDER BY ot.id ASC
+         """, (order_id,))
+         results = self.cur.fetchall()
+         return {"patient": patient_info, "order": order_info, "results": results}
+     def save_results(self, order_id, results_dict):
+         for name, payload in results_dict.items():
+             if name not in self.test_map:
+                 continue
+             tid = self.test_map[name]
+             result_value = payload
+             sample_status = None
+             sample_issue = None
+             observation = None
++            sample_type = None
+             if isinstance(payload, dict) and "result" in payload:
+                 result_value = payload.get("result")
+                 sample_status = payload.get("sample_status")
+                 sample_issue = payload.get("sample_issue")
+                 observation = payload.get("observation")
++                sample_type = payload.get("sample_type")
+                 pending_since = payload.get("pending_since")
+             else:
+                 pending_since = None
+             if isinstance(result_value, dict):
+                 stored = json.dumps(result_value, ensure_ascii=False)
+             else:
+                 stored = result_value
+             if sample_status is None:
+                 sample_status = "recibida"
+             if sample_issue is None:
+                 sample_issue = ""
+             if observation is None:
+                 observation = ""
++            if sample_type is not None:
++                sample_type = str(sample_type).strip()
+             if sample_status != "pendiente":
+                 pending_since = None
+             else:
+                 if not pending_since:
+                     pending_since = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+             self.cur.execute(
+                 """
+                 UPDATE order_tests
+                 SET result=?,
+                     sample_status=?,
+                     sample_issue=?,
+                     observation=?,
++                    sample_type=?,
+                     pending_since=?
+                 WHERE order_id=? AND test_id=?
+                 """,
+-                (stored, sample_status, sample_issue, observation, pending_since, order_id, tid)
++                (stored, sample_status, sample_issue, observation, sample_type, pending_since, order_id, tid)
+             )
+         return self._update_order_completion(order_id)
+ 
+     def ensure_followup_order_for_pending(self, source_order_id, pending_tests, user_id):
+         if not source_order_id or not pending_tests or not user_id:
+             return (None, None)
+         self.cur.execute(
+             """
+             SELECT patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years
+             FROM orders
+             WHERE id=? AND (deleted IS NULL OR deleted=0)
+             """,
+             (source_order_id,)
+         )
+         row = self.cur.fetchone()
+         if not row:
+             return (None, None)
+         patient_id, requested_by, diagnosis, insurance_type, fua_number, age_years = row
+         normalized_tests = []
+         for entry in pending_tests:
+             if isinstance(entry, dict):
+                 name = entry.get("name")
+                 issue = (entry.get("issue") or "").strip()
+             else:
+                 name = entry
+ 
+EOF
+)

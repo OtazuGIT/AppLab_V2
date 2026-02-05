@@ -131,6 +131,7 @@ class LabDB:
                 sample_status TEXT DEFAULT 'recibida',
                 sample_issue TEXT,
                 observation TEXT,
+                sample_type TEXT,
                 deleted INTEGER DEFAULT 0,
                 deleted_reason TEXT,
                 deleted_by INTEGER,
@@ -277,6 +278,7 @@ class LabDB:
         self._ensure_column_exists("order_tests", "sample_status", "TEXT", default_value="recibida")
         self._ensure_column_exists("order_tests", "sample_issue", "TEXT")
         self._ensure_column_exists("order_tests", "observation", "TEXT")
+        self._ensure_column_exists("order_tests", "sample_type", "TEXT")
         self._ensure_column_exists("order_tests", "pending_since", "TEXT")
         self._ensure_column_exists("order_tests", "deleted", "INTEGER", default_value="0")
         self._ensure_column_exists("order_tests", "deleted_reason", "TEXT")
@@ -685,7 +687,7 @@ class LabDB:
             "emitted_at": emitted_at,
         }
         self.cur.execute("""
-            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.id, ot.pending_since
+            SELECT t.name, ot.result, t.category, ot.sample_status, ot.sample_issue, ot.observation, ot.sample_type, ot.id, ot.pending_since
             FROM order_tests ot
             JOIN tests t ON ot.test_id = t.id
             WHERE ot.order_id = ?
@@ -703,11 +705,13 @@ class LabDB:
             sample_status = None
             sample_issue = None
             observation = None
+            sample_type = None
             if isinstance(payload, dict) and "result" in payload:
                 result_value = payload.get("result")
                 sample_status = payload.get("sample_status")
                 sample_issue = payload.get("sample_issue")
                 observation = payload.get("observation")
+                sample_type = payload.get("sample_type")
                 pending_since = payload.get("pending_since")
             else:
                 pending_since = None
@@ -721,6 +725,8 @@ class LabDB:
                 sample_issue = ""
             if observation is None:
                 observation = ""
+            if sample_type is not None:
+                sample_type = str(sample_type).strip()
             if sample_status != "pendiente":
                 pending_since = None
             else:
@@ -733,10 +739,11 @@ class LabDB:
                     sample_status=?,
                     sample_issue=?,
                     observation=?,
+                    sample_type=?,
                     pending_since=?
                 WHERE order_id=? AND test_id=?
                 """,
-                (stored, sample_status, sample_issue, observation, pending_since, order_id, tid)
+                (stored, sample_status, sample_issue, observation, sample_type, pending_since, order_id, tid)
             )
         return self._update_order_completion(order_id)
 
