@@ -5600,6 +5600,7 @@ class MainWindow(QMainWindow):
         self.activity_min_age_spin.valueChanged.connect(self.apply_activity_filter)
         self.activity_max_age_spin.valueChanged.connect(self.apply_activity_filter)
         self.activity_test_filter.currentIndexChanged.connect(self.apply_activity_filter)
+        self.activity_table.cellClicked.connect(self.open_history_from_activity)
         self._update_range_controls()
         self._stats_controls_ready = True
         self._update_stats_period_controls()
@@ -5940,6 +5941,28 @@ class MainWindow(QMainWindow):
             self.apply_activity_filter()
         else:
             self._render_activity_rows(activity_data, description)
+
+    def open_history_from_activity(self, row, column):
+        if column != 3:
+            return
+        cache = getattr(self, '_activity_cache', {}) if hasattr(self, '_activity_cache') else {}
+        entries = cache.get("data", [])
+        if not (0 <= row < len(entries)):
+            return
+        entry = entries[row]
+        doc_number = (entry.get("doc_number") or "").strip()
+        if not doc_number:
+            doc_text = entry.get("document", "")
+            doc_number = "".join(ch for ch in doc_text if ch.isdigit())
+        if not doc_number:
+            return
+        if hasattr(self, 'history_doc_input'):
+            self.history_doc_input.setText(doc_number)
+        if hasattr(self, 'history_lastname_input'):
+            self.history_lastname_input.clear()
+        if hasattr(self, 'analysis_tabs') and hasattr(self, 'history_tab'):
+            self.analysis_tabs.setCurrentWidget(self.history_tab)
+        self.search_patient_history()
 
 
     def delete_selected_activity_entries(self):

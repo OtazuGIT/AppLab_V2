@@ -1,0 +1,133 @@
+ (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
+diff --git a/main_window.py b/main_window.py
+index 1e5e93c537a0be53c1eb4b500b03cdf1874a93c6..df6c07b593de5c44ab1fc275b170a9232f0a9bc0 100644
+--- a/main_window.py
++++ b/main_window.py
+@@ -5578,50 +5578,51 @@ class MainWindow(QMainWindow):
+ 
+         self.history_mobile_toolbox = QToolBox()
+ 
+         history_tab_layout.addWidget(self.history_alerts_bar)
+         history_tab_layout.addWidget(history_workspace)
+         history_tab_layout.addWidget(self.history_mobile_toolbox)
+         self.history_mobile_toolbox.hide()
+         self.analysis_tabs.addTab(history_tab, "Historial de pacientes")
+         self._stats_controls_ready = False
+         self.stats_mode_combo.currentIndexChanged.connect(self._update_stats_period_controls)
+         self.stats_month_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_quarter_combo.currentIndexChanged.connect(lambda _: self.refresh_statistics())
+         self.stats_year_spin.valueChanged.connect(lambda _: self.refresh_statistics())
+         self._history_results = []
+         self.range_combo.currentIndexChanged.connect(self._update_range_controls)
+         self.activity_search_input.textChanged.connect(self.apply_activity_filter)
+         self.view_activity_btn.clicked.connect(self.load_activity_summary)
+         self.export_activity_pdf_btn.clicked.connect(lambda: self.export_activity_record("pdf"))
+         self.export_activity_csv_btn.clicked.connect(lambda: self.export_activity_record("csv"))
+         self.export_activity_excel_btn.clicked.connect(lambda: self.export_activity_record("xlsx"))
+         self.export_activity_delivery_btn.clicked.connect(self.export_activity_delivery_sheet)
+         self.delete_activity_btn.clicked.connect(self.delete_selected_activity_entries)
+         self.activity_min_age_spin.valueChanged.connect(self.apply_activity_filter)
+         self.activity_max_age_spin.valueChanged.connect(self.apply_activity_filter)
+         self.activity_test_filter.currentIndexChanged.connect(self.apply_activity_filter)
++        self.activity_table.cellClicked.connect(self.open_history_from_activity)
+         self._update_range_controls()
+         self._stats_controls_ready = True
+         self._update_stats_period_controls()
+         self.history_doc_input.returnPressed.connect(self.search_patient_history)
+         self.history_lastname_input.returnPressed.connect(self.search_patient_history)
+         self.history_search_btn.clicked.connect(self.search_patient_history)
+         self.history_open_btn.clicked.connect(self.open_history_order_from_analysis)
+         self.history_table.itemSelectionChanged.connect(self._on_history_selection_changed)
+         self.history_fua_btn.clicked.connect(self.edit_history_fua)
+         self.history_window_btn.clicked.connect(self.open_history_window)
+         if hasattr(self, 'history_tab'):
+             def _history_tab_resize(event):
+                 QWidget.resizeEvent(self.history_tab, event)
+                 self._update_history_workspace_layout()
+                 if hasattr(self, '_history_alert_tags'):
+                     self._layout_history_alerts_bar(
+                         self._history_alert_tags,
+                         getattr(self, '_history_alert_color_map', None)
+                     )
+             self.history_tab.resizeEvent = _history_tab_resize
+         self._update_history_workspace_layout()
+     def refresh_statistics(self):
+         if not getattr(self, '_stats_controls_ready', False):
+             return
+         period = self._get_statistics_period()
+@@ -5919,50 +5920,72 @@ class MainWindow(QMainWindow):
+                 "summary_text": summary_text,
+                 "has_result": True,
+                 "category": category,
+                 "order_observations": order_obs,
+                 "insurance_type": insurance_type,
+                 "fua_number": fua_number,
+                 "emitted": None,
+                 "emitted_at": None,
+                 "first_name": first,
+                 "last_name": last,
+                 "sample_status": sample_status,
+                 "sample_issue": sample_issue,
+                 "observation": observation
+             })
+         self._activity_cache = {
+             "data": activity_data,
+             "description": description,
+             "start": start_dt,
+             "end": end_dt
+         }
+         if hasattr(self, 'activity_search_input'):
+             self.apply_activity_filter()
+         else:
+             self._render_activity_rows(activity_data, description)
+ 
++    def open_history_from_activity(self, row, column):
++        if column != 3:
++            return
++        cache = getattr(self, '_activity_cache', {}) if hasattr(self, '_activity_cache') else {}
++        entries = cache.get("data", [])
++        if not (0 <= row < len(entries)):
++            return
++        entry = entries[row]
++        doc_number = (entry.get("doc_number") or "").strip()
++        if not doc_number:
++            doc_text = entry.get("document", "")
++            doc_number = "".join(ch for ch in doc_text if ch.isdigit())
++        if not doc_number:
++            return
++        if hasattr(self, 'history_doc_input'):
++            self.history_doc_input.setText(doc_number)
++        if hasattr(self, 'history_lastname_input'):
++            self.history_lastname_input.clear()
++        if hasattr(self, 'analysis_tabs') and hasattr(self, 'history_tab'):
++            self.analysis_tabs.setCurrentWidget(self.history_tab)
++        self.search_patient_history()
++
+ 
+     def delete_selected_activity_entries(self):
+         if not hasattr(self, 'activity_table'):
+             return
+         selected = self.activity_table.selectionModel().selectedRows() if self.activity_table.selectionModel() else []
+         if not selected:
+             QMessageBox.information(self, "Sin selección", "Seleccione al menos un resultado para eliminar.")
+             return
+         if not getattr(self, '_activity_cache', None):
+             self.load_activity_summary()
+         cache = getattr(self, '_activity_cache', {"data": []})
+         entries = cache.get("data", [])
+         selected_ids = []
+         for model_index in selected:
+             row = model_index.row()
+             if 0 <= row < len(entries):
+                 entry = entries[row]
+                 entry_id = entry.get("entry_id")
+                 if entry_id:
+                     selected_ids.append(entry_id)
+         if not selected_ids:
+             QMessageBox.warning(self, "Sin datos", "No se pudo identificar los registros seleccionados.")
+             return
+         dialog = ReasonDialog(
+             "Eliminar resultados",
+ 
+EOF
+)
