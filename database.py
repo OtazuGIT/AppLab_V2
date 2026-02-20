@@ -16,8 +16,8 @@ class LabDB:
             "Serología Leishmaniasis (referencial)",
         }
         self._referential_lookup = {name.lower().strip() for name in self.referential_tests}
-    def connect(self):
-        self.conn = sqlite3.connect(self.db_path)
+    def connect(self, check_same_thread=True):
+        self.conn = sqlite3.connect(self.db_path, check_same_thread=check_same_thread)
         self.cur = self.conn.cursor()
         self.cur.execute("PRAGMA foreign_keys = ON")
         self.conn.commit()

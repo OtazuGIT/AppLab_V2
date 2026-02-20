@@ -6,34 +6,72 @@
   <title>Dashboard | AppLab Clinic Web</title>
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
-<body>
-  <header class="topbar">
-    <div>
-      <h1>AppLab Clinic Web</h1>
-      <p>Bienvenido, __DISPLAY_NAME__</p>
-    </div>
-    <form action="/logout" method="post">
-      <button class="logout-btn" type="submit">Cerrar sesión</button>
-    </form>
-  </header>
+<body class="app-body">
+  <div class="app-shell">
+    <aside class="side-menu">
+      <div class="side-menu__title">LABORATORIO CLÍNICO</div>
+      <nav class="side-menu__nav">
+        <a class="nav-link is-active" href="#registro">Registro</a>
+        <a class="nav-link" href="#resultados">Anotar resultados</a>
+        <a class="nav-link" href="#emitir">Emitir resultados</a>
+        <a class="nav-link" href="#analisis">Análisis de datos</a>
+        <a class="nav-link" href="#configuracion">Configuración</a>
+      </nav>
+      <form action="/logout" method="post" class="side-menu__logout">
+        <button class="logout-btn" type="submit">Cerrar sesión</button>
+      </form>
+    </aside>
 
-  <main class="dashboard-grid">
-    <article class="metric-card">
-      <h2>Pacientes</h2>
-      <p>__PATIENTS__</p>
-    </article>
-    <article class="metric-card">
-      <h2>Órdenes</h2>
-      <p>__ORDERS__</p>
-    </article>
-    <article class="metric-card">
-      <h2>Órdenes completadas</h2>
-      <p>__COMPLETED_ORDERS__</p>
-    </article>
-    <article class="metric-card">
-      <h2>Usuarios</h2>
-      <p>__USERS__</p>
-    </article>
-  </main>
+    <main class="content-area">
+      <header class="topbar">
+        <div>
+          <h1>AppLab Clinic Web</h1>
+          <p>Bienvenido, __DISPLAY_NAME__</p>
+        </div>
+      </header>
+
+      <section class="dashboard-grid">
+        <article class="metric-card">
+          <h2>Pacientes</h2>
+          <p>__PATIENTS__</p>
+        </article>
+        <article class="metric-card">
+          <h2>Órdenes</h2>
+          <p>__ORDERS__</p>
+        </article>
+        <article class="metric-card">
+          <h2>Órdenes completadas</h2>
+          <p>__COMPLETED_ORDERS__</p>
+        </article>
+        <article class="metric-card">
+          <h2>Usuarios</h2>
+          <p>__USERS__</p>
+        </article>
+      </section>
+
+      <section class="modules-grid">
+        <article id="registro" class="module-card">
+          <h3>Registro de pacientes</h3>
+          <p>Alta de pacientes y generación de orden.</p>
+        </article>
+        <article id="resultados" class="module-card">
+          <h3>Anotar resultados</h3>
+          <p>Ingreso de resultados para órdenes pendientes.</p>
+        </article>
+        <article id="emitir" class="module-card">
+          <h3>Emitir resultados</h3>
+          <p>Visualización e impresión de órdenes completadas.</p>
+        </article>
+        <article id="analisis" class="module-card">
+          <h3>Análisis de datos</h3>
+          <p>Indicadores operativos y seguimiento del laboratorio.</p>
+        </article>
+        <article id="configuracion" class="module-card">
+          <h3>Configuración</h3>
+          <p>Parámetros generales, usuarios y ajustes del sistema.</p>
+        </article>
+      </section>
+    </main>
+  </div>
 </body>
 </html>

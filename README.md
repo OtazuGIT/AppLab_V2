@@ -41,3 +41,22 @@ Para una experiencia más pulida puedes envolver la carpeta `dist/AppLabClinic` 
 * **macOS:** firmar y empaquetar el contenido en un `.app` utilizando `create-dmg` o `productbuild`.
 
 En todos los casos incluye la carpeta completa generada por PyInstaller para mantener los recursos y la base de datos inicial.
+
+
+## Migración inicial a versión web (HTTP server nativo)
+
+Se añadió una primera versión web para usar la app desde Chrome/Edge/Firefox sin depender de PyQt.
+
+### Ejecutar la versión web
+
+```bash
+python -m venv .venv
+source .venv/bin/activate  # En Windows: .venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.txt
+python web_app.py
+```
+
+Luego abre `http://127.0.0.1:8000` en tu navegador.
+
+> Esta migración cubre login web y un dashboard inicial con métricas (pacientes, órdenes, órdenes completadas y usuarios). La versión de escritorio (`main.py`) sigue disponible mientras se completa la migración total de módulos.

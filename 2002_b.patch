@@ -1,0 +1,52 @@
+diff --git a/database.py b/database.py
+index 438c19821fc15125d12dc849b466e6270cea404e..cb24641c30edc58d6ea5233be1973e371a0be775 100644
+--- a/database.py
++++ b/database.py
+@@ -1,45 +1,45 @@
+ # database.py
+ import datetime
+ import json
+ import sqlite3
+ from collections import OrderedDict
+ class LabDB:
+     def __init__(self, db_path="lab_db.sqlite"):
+         self.db_path = db_path
+         self.conn = None
+         self.cur = None
+         self.test_map = {}
+         self.referential_tests = {
+             "BK (resultado referencial)",
+             "Serología Dengue (referencial)",
+             "Serología Leptospira (referencial)",
+             "Serología Leishmaniasis (referencial)",
+         }
+         self._referential_lookup = {name.lower().strip() for name in self.referential_tests}
+-    def connect(self):
+-        self.conn = sqlite3.connect(self.db_path)
++    def connect(self, check_same_thread=True):
++        self.conn = sqlite3.connect(self.db_path, check_same_thread=check_same_thread)
+         self.cur = self.conn.cursor()
+         self.cur.execute("PRAGMA foreign_keys = ON")
+         self.conn.commit()
+ 
+     def _table_has_column(self, table_name, column_name):
+         self.cur.execute(f"PRAGMA table_info({table_name})")
+         return any(col[1] == column_name for col in self.cur.fetchall())
+ 
+     def _is_referential_test(self, test_name):
+         if not test_name:
+             return False
+         return test_name.strip().lower() in self._referential_lookup
+ 
+     def _resolve_test_id(self, test_name):
+         if not test_name:
+             return None
+         raw_name = test_name
+         normalized = test_name.strip()
+         for candidate in (raw_name, normalized):
+             if candidate in self.test_map:
+                 return self.test_map[candidate]
+         if not normalized:
+             return None
+         self.cur.execute("SELECT id, name FROM tests WHERE name=?", (normalized,))
+         row = self.cur.fetchone()
