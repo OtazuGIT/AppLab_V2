@@ -60,45 +60,65 @@ HEMOGRAM_BASE_FIELDS = [
      "optional": True, "placeholder": "Describe hallazgos morfológicos"}
 ]
 
+_DIPSTICK_OPTS = ["Negativo", "Trazas", "+", "++", "+++", "++++"]
+_UROBILINOGENO_OPTS = ["Normal (0.1-1.0 mg/dL)", "2.0 mg/dL", "4.0 mg/dL", "8.0 mg/dL"]
+
 URINE_BASE_FIELDS = [
     {"type": "section", "label": "Examen físico"},
-    {"key": "color", "label": "Color", "reference": "Amarillo pajizo; RN: incoloro a amarillo claro"},
-    {"key": "aspecto", "label": "Aspecto", "reference": "Transparente; leve turbidez fisiológica en gestantes"},
-    {"key": "olor", "label": "Olor", "reference": "Aromático suave", "optional": True},
-    {"type": "section", "label": "Examen químico"},
-    {"key": "densidad", "label": "Densidad", "reference": "RN: 1.002-1.012 | Niños: 1.005-1.015 | Adultos: 1.005-1.030"},
-    {"key": "ph", "label": "pH", "reference": "RN: 5.0-7.0 | Niños/Adultos: 5.0-7.5"},
-    {"key": "urobilinogeno", "label": "Urobilinógeno", "reference": "0.1-1.0 mg/dL"},
-    {"key": "bilirrubina", "label": "Bilirrubina", "reference": "Negativo"},
-    {"key": "proteinas", "label": "Proteínas", "reference": "Negativo (<15 mg/dL)"},
-    {"key": "nitritos", "label": "Nitritos", "reference": "Negativo"},
-    {"key": "glucosa", "label": "Glucosa", "reference": "Negativo"},
-    {"key": "cetonas", "label": "Cetonas", "reference": "Negativo"},
-    {"key": "leucocitos_quimico", "label": "Leucocitos", "reference": "Negativo"},
-    {"key": "acido_ascorbico", "label": "Ácido ascórbico", "reference": "Negativo", "optional": True},
-    {"key": "sangre", "label": "Sangre", "reference": "Negativo"},
+    {"key": "color",   "label": "Color",   "reference": "Amarillo pajizo; RN: incoloro a amarillo claro",
+     "type": "choice", "choices": ["Amarillo pajizo", "Amarillo claro", "Amarillo oscuro", "Anaranjado", "Rojo / hematúrico", "Marrón", "Turbio / lechoso", "Incoloro"]},
+    {"key": "aspecto", "label": "Aspecto", "reference": "Transparente; leve turbidez fisiológica en gestantes",
+     "type": "choice", "choices": ["Transparente", "Ligeramente turbio", "Turbio", "Muy turbio / lechoso"]},
+    {"key": "olor",    "label": "Olor",    "reference": "Aromático suave", "optional": True},
+    {"type": "section", "label": "Examen químico (tira reactiva)"},
+    {"key": "densidad",          "label": "Densidad",       "reference": "RN: 1.002-1.012 | Niños: 1.005-1.015 | Adultos: 1.005-1.030", "placeholder": "Ej. 1.020"},
+    {"key": "ph",                "label": "pH",             "reference": "RN: 5.0-7.0 | Niños/Adultos: 5.0-7.5", "placeholder": "Ej. 6.0"},
+    {"key": "urobilinogeno",     "label": "Urobilinógeno",  "reference": "Normal: 0.1-1.0 mg/dL",
+     "type": "choice", "choices": _UROBILINOGENO_OPTS},
+    {"key": "bilirrubina",       "label": "Bilirrubina",    "reference": "Negativo",          "type": "dipstick"},
+    {"key": "proteinas",         "label": "Proteínas",      "reference": "Negativo (<15 mg/dL)", "type": "dipstick"},
+    {"key": "nitritos",          "label": "Nitritos",       "reference": "Negativo",
+     "type": "bool", "positive_text": "Positivo", "negative_text": "Negativo"},
+    {"key": "glucosa",           "label": "Glucosa",        "reference": "Negativo",          "type": "dipstick"},
+    {"key": "cetonas",           "label": "Cetonas",        "reference": "Negativo",          "type": "dipstick"},
+    {"key": "leucocitos_quimico","label": "Leucocitos",     "reference": "Negativo",          "type": "dipstick"},
+    {"key": "acido_ascorbico",   "label": "Ácido ascórbico","reference": "Negativo",          "type": "dipstick", "optional": True},
+    {"key": "sangre",            "label": "Sangre",         "reference": "Negativo",          "type": "dipstick"},
     {"type": "section", "label": "Sedimento urinario"},
-    {"key": "celulas_epiteliales", "label": "Células epiteliales/c", "reference": "0-5 /campo"},
-    {"key": "leucocitos_campo", "label": "Leucocitos/c", "reference": "0-5 /campo (mujeres hasta 10)"},
-    {"key": "hematies_campo", "label": "Hematíes/c", "reference": "0-2 /campo"},
-    {"key": "cristales", "label": "Cristales/c", "reference": "No se observan", "optional": True},
-    {"key": "cilindros", "label": "Cilindros/c", "reference": "0-2 cilindros hialinos/campo"},
-    {"key": "otros_hallazgos", "label": "Otros hallazgos", "type": "text_area", "optional": True}
+    {"key": "celulas_epiteliales","label": "Células epiteliales/c", "reference": "0-5 /campo"},
+    {"key": "leucocitos_campo",  "label": "Leucocitos/c",   "reference": "0-5 /campo (mujeres hasta 10)"},
+    {"key": "hematies_campo",    "label": "Hematíes/c",     "reference": "0-2 /campo"},
+    {"key": "cristales",         "label": "Cristales/c",    "reference": "No se observan", "optional": True,
+     "quick_negative": "-"},
+    {"key": "cilindros",         "label": "Cilindros/c",    "reference": "0-2 cilindros hialinos/campo"},
+    {"key": "otros_hallazgos",   "label": "Otros hallazgos","type": "text_area", "optional": True,
+     "quick_negative": "-"}
 ]
+
+_COPRO_CONSISTENCIA = ["Formada", "Blanda", "Semilíquida", "Líquida", "Mucosa", "Pastosa"]
+_COPRO_COLOR = ["Pardo amarillento", "Amarillo", "Verde", "Negro", "Rojo / sanguinolento", "Blanquecino / acólico"]
 
 COPRO_DIRECT_FIELDS = [
     {"type": "section", "label": "Evaluación macroscópica"},
-    {"key": "consistencia", "label": "Consistencia", "reference": "Formada; lactantes semiformada"},
-    {"key": "color", "label": "Color", "reference": "Pardo amarillento", "optional": True},
+    {"key": "consistencia", "label": "Consistencia", "reference": "Formada; lactantes semiformada",
+     "type": "choice", "choices": _COPRO_CONSISTENCIA},
+    {"key": "color", "label": "Color", "reference": "Pardo amarillento", "optional": True,
+     "type": "choice", "choices": _COPRO_COLOR},
     {"key": "moco", "label": "Moco", "type": "choice",
      "choices": ["Ausente", "Escaso", "Moderado", "Abundante"], "reference": "Ausente o escaso"},
+    {"key": "sangre_macro", "label": "Sangre macroscópica", "type": "choice",
+     "choices": ["Ausente", "Presente"], "reference": "Ausente", "optional": True},
     {"type": "section", "label": "Evaluación microscópica"},
     {"key": "leucocitos", "label": "Leucocitos/c", "reference": "0-2 /campo"},
     {"key": "hematies", "label": "Hematíes/c", "reference": "0-1 /campo"},
-    {"key": "parasitos", "label": "Parásitos observados", "type": "text_area",
-     "reference": "No se observan", "optional": True},
-    {"key": "levaduras", "label": "Levaduras", "reference": "Ausentes o escasas", "optional": True},
-    {"key": "grasas", "label": "Grasas", "reference": "Ausentes", "optional": True},
+    {"key": "parasitos", "label": "Parásitos / quistes / huevos", "type": "text_area",
+     "reference": "No se observan", "optional": True,
+     "quick_negative": "No se observan parásitos, quistes ni huevos",
+     "placeholder": "Ej. Quistes de Giardia lamblia, huevos de Ascaris lumbricoides"},
+    {"key": "levaduras",  "label": "Levaduras",  "reference": "Ausentes o escasas", "optional": True,
+     "quick_negative": "Ausentes"},
+    {"key": "grasas",     "label": "Grasas",     "reference": "Ausentes", "optional": True,
+     "quick_negative": "Ausentes"},
     {"key": "reaccion_inflamatoria", "label": "Reacción inflamatoria", "optional": True},
     {"key": "metodo", "label": "Método", "type": "choice",
      "choices": ["Directo", "Concentrado", "Serial"], "reference": "Registrar técnica aplicada"},
@@ -162,8 +182,10 @@ SECRECION_VAGINAL_FIELDS = [
     {"key": "celulas_epiteliales", "label": "Células epiteliales/campo", "reference": "Escasas", "optional": True},
     {"key": "leucocitos", "label": "Leucocitos/campo", "reference": "<10/campo de gran aumento"},
     {"key": "hematies", "label": "Hematíes/campo", "reference": "0-1/campo", "optional": True},
-    {"key": "trichomonas", "label": "Trichomonas vaginalis", "reference": "No se observan", "optional": True},
-    {"key": "levaduras", "label": "Levaduras / blastosporas", "reference": "No se observan", "optional": True},
+    {"key": "trichomonas", "label": "Trichomonas vaginalis", "reference": "No se observan", "optional": True,
+     "quick_negative": "No se observan"},
+    {"key": "levaduras", "label": "Levaduras / blastosporas", "reference": "No se observan", "optional": True,
+     "quick_negative": "No se observan"},
     {"key": "otros_fresco", "label": "Otros hallazgos (fresco)", "optional": True},
     {"type": "section", "label": "Coloración de Gram"},
     {"key": "puntaje_nugent", "label": "Puntaje de Nugent",
@@ -299,6 +321,25 @@ def build_bool_observation_template(positive_text="Positivo", negative_text="Neg
              "optional": True, "placeholder": "Observaciones (opcional)"}
         ]
     }
+
+
+def build_parasitologico_seriado_template(sample_count=3):
+    _CONS = ["Formada", "Blanda", "Semilíquida", "Líquida", "Mucosa", "Pastosa"]
+    _COL  = ["Pardo amarillento", "Amarillo", "Verde", "Negro", "Rojo / sanguinolento", "Blanquecino"]
+    fields = []
+    for idx in range(1, sample_count + 1):
+        fields.append({"type": "section", "label": f"Muestra {idx}"})
+        fields.append({"key": f"consistencia_{idx}", "label": "Consistencia", "type": "choice",
+                        "choices": _CONS, "optional": True})
+        fields.append({"key": f"color_{idx}",        "label": "Color",         "type": "choice",
+                        "choices": _COL, "optional": True})
+        fields.append({"key": f"hallazgos_{idx}",    "label": "Hallazgos parasitológicos",
+                        "type": "text_area", "optional": True,
+                        "quick_negative": "No se observan parásitos ni huevos",
+                        "placeholder": "Ej. Quistes de Giardia lamblia, huevos de Ascaris"})
+    fields.append({"key": "observaciones", "label": "Observaciones generales",
+                    "type": "text_area", "optional": True})
+    return {"fields": fields}
 
 
 def build_multi_sample_bool_template(sample_count=3, positive_text="Positivo",
@@ -532,8 +573,6 @@ SIMPLE_TEXTAREA_TESTS = {
 
 BOOL_TESTS = {
     "Células LE": {"positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"},
-    "Baciloscopía": {"positive_text": "BAAR positivo", "negative_text": "BAAR negativo",
-                      "reference": "No se observan bacilos ácido-alcohol resistentes"},
     "Gota gruesa": {"positive_text": "Hemoparásitos", "negative_text": "No se observan",
                      "reference": "No se observan Plasmodium spp."},
     "Frotis para Leishmaniasis": {"positive_text": "Leishmania sp.", "negative_text": "No se observan",
@@ -581,7 +620,14 @@ SAMPLE_TEMPLATES = {
         "Control de cadena de custodia (sin valores analíticos)"),
     "Covid-19 (Prueba antigénica)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
     "Covid-19 (Prueba serológica)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
-    "Dengue NS1/IgM/IgG (Prueba rápida)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
+    "Dengue NS1/IgM/IgG (Prueba rápida)": {
+        "fields": [
+            {"key": "ns1", "label": "NS1",  "type": "bool", "positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"},
+            {"key": "igm", "label": "IgM",  "type": "bool", "positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"},
+            {"key": "igg", "label": "IgG",  "type": "bool", "positive_text": "Positivo", "negative_text": "Negativo", "reference": "Negativo"},
+            {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True},
+        ]
+    },
     "Hepatitis A (Prueba rápida)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
     "Hepatitis B (Prueba rápida)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
     "PSA (Prueba rápida)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
@@ -589,7 +635,13 @@ SAMPLE_TEMPLATES = {
     "Helicobacter pylori (Prueba rápida)": build_bool_observation_template("Positivo", "Negativo", "Negativo"),
     "VIH (Prueba rápida)": build_bool_observation_template("Reactivo", "No reactivo", "No reactivo"),
     "Sífilis (Prueba rápida)": build_bool_observation_template("Reactivo", "No reactivo", "No reactivo"),
-    "VIH/Sífilis (Prueba combinada)": build_bool_observation_template("Reactivo", "No reactivo", "No reactivo"),
+    "VIH/Sífilis (Prueba combinada)": {
+        "fields": [
+            {"key": "vih",     "label": "VIH",    "type": "bool", "positive_text": "Reactivo", "negative_text": "No reactivo", "reference": "No reactivo"},
+            {"key": "sifilis", "label": "Sífilis", "type": "bool", "positive_text": "Reactivo", "negative_text": "No reactivo", "reference": "No reactivo"},
+            {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True},
+        ]
+    },
     "BHCG (Prueba de embarazo en sangre)": build_bool_observation_template(
         "Positivo", "Negativo", "Negativo (<5 mUI/mL)")
 }
@@ -622,15 +674,28 @@ for _test_name, _params in BOOL_TESTS.items():
 for _test_name, _template in SAMPLE_TEMPLATES.items():
     TEST_TEMPLATES[_test_name] = copy.deepcopy(_template)
 
-# Multi-muestra
-TEST_TEMPLATES["Parasitológico seriado"] = build_multi_sample_bool_template(
-    sample_count=3, positive_text="Positivo", negative_text="Negativo",
-    reference_text="No se observan parásitos"
-)
+# Multi-muestra expandido
+TEST_TEMPLATES["Parasitológico seriado"] = build_parasitologico_seriado_template(3)
 TEST_TEMPLATES["Test de Graham"] = build_multi_sample_bool_template(
     sample_count=3, positive_text="Huevos presentes", negative_text="No se observan",
     reference_text="Sin huevos de Enterobius vermicularis"
 )
+
+# Baciloscopía con cruces y bacilos por campo
+TEST_TEMPLATES["Baciloscopía"] = {
+    "fields": [
+        {"key": "resultado", "label": "Resultado (graduación)", "type": "choice",
+         "choices": ["BAAR negativo", "BAAR escasos (1-9 BAAR/100 campos)",
+                     "BAAR 1+ (10-99 BAAR/100 campos)", "BAAR 2+ (1-10 BAAR/campo)",
+                     "BAAR 3+ (>10 BAAR/campo)", "BAAR 4+ (confluente, >10 BAAR/campo)"],
+         "reference": "BAAR negativo"},
+        {"key": "bacilos_por_campo", "label": "Promedio BAAR/campo", "optional": True,
+         "placeholder": "Ej. 3-5"},
+        {"key": "campos_observados", "label": "Campos observados",   "optional": True,
+         "placeholder": "Ej. 100"},
+        {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True},
+    ]
+}
 
 # Hematocrito
 HEMATOCRIT_BASE_TEMPLATE = build_single_value_template(

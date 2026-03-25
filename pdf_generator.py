@@ -810,3 +810,84 @@ def generate_order_pdf(order_details: dict, emitted_at: str) -> bytes:
     if isinstance(raw, str):
         return raw.encode('latin-1')
     return bytes(raw)
+
+
+def generate_registro_pdf(rows, desde: str, hasta: str) -> bytes:
+    """Genera un PDF con el registro de pruebas para el rango dado.
+    rows: output of db.get_results_in_range()
+    """
+    pdf = FPDF('L', 'mm', 'A4')   # Landscape for wider table
+    pdf.set_margins(8, 8, 8)
+    pdf.set_auto_page_break(True, margin=10)
+    pdf.add_page()
+
+    # Header
+    pdf.set_font("Arial", "B", 13)
+    pdf.cell(0, 7, _ensure_latin1(LAB_TITLE), ln=True, align="C")
+    pdf.set_font("Arial", "B", 10)
+    periodo = f"Registro de pruebas: {desde} al {hasta}"
+    pdf.cell(0, 6, _ensure_latin1(periodo), ln=True, align="C")
+    pdf.set_font("Arial", "", 8)
+    generated = f"Generado: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
+    pdf.cell(0, 5, _ensure_latin1(generated), ln=True, align="C")
+    pdf.ln(3)
+
+    # Table header  — landscape A4 = 277mm usable
+    COL_W = [20, 60, 30, 12, 50, 105]   # Fecha|Paciente|Documento|Edad|Examen|Resultado
+    HEADERS = ["Fecha", "Paciente", "Documento", "Edad", "Examen", "Resultado"]
+    pdf.set_fill_color(46, 134, 222)
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font("Arial", "B", 7)
+    for h, w in zip(HEADERS, COL_W):
+        pdf.cell(w, 6, _ensure_latin1(h), border=1, align="C", fill=True)
+    pdf.ln()
+    pdf.set_text_color(0, 0, 0)
+
+    # Rows
+    fill = False
+    pdf.set_font("Arial", "", 7)
+    for r in rows:
+        o_date   = str(r[2] or "")[:10]
+        p_first  = r[4] or ""
+        p_last   = r[5] or ""
+        p_doc_t  = r[6] or ""
+        p_doc_n  = r[7] or ""
+        o_age    = str(r[15]) if r[15] is not None else "—"
+        t_name   = r[19] or ""
+        ot_res   = r[21] or ""
+
+        # Parse result
+        disp = ot_res
+        try:
+            d = json.loads(ot_res)
+            if isinstance(d, dict) and d.get("type") == "structured":
+                vals = [(k, v) for k, v in d.get("values", {}).items() if v not in ("", None)]
+                disp = " | ".join(f"{k}: {v}" for k, v in vals) if vals else "—"
+            elif isinstance(d, dict):
+                v = d.get("value", ot_res)
+                disp = str(v) if v else "—"
+        except Exception:
+            pass
+
+        p_name = f"{p_last} {p_first}".strip()
+
+        row_vals = [o_date, p_name, f"{p_doc_t} {p_doc_n}".strip(), o_age, t_name, disp]
+        pdf.set_fill_color(248, 251, 255) if fill else pdf.set_fill_color(255, 255, 255)
+        # Multi-line cell hack: use the last column as a multi-line cell
+        # Calculate row height by splitting result text
+        result_text = _ensure_latin1(str(disp))
+        for val, w in zip(row_vals[:-1], COL_W[:-1]):
+            pdf.cell(w, 5, _ensure_latin1(str(val))[:30], border="LTB", fill=True)
+        # Last cell (result) — truncate to fit
+        pdf.cell(COL_W[-1], 5, result_text[:80], border="RTB", fill=True)
+        pdf.ln()
+        fill = not fill
+
+    pdf.ln(3)
+    pdf.set_font("Arial", "I", 7)
+    pdf.cell(0, 4, _ensure_latin1(f"Total: {len(rows)} resultado(s)"), ln=True)
+
+    raw = pdf.output(dest='S')
+    if isinstance(raw, str):
+        return raw.encode('latin-1')
+    return bytes(raw)

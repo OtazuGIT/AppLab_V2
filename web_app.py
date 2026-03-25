@@ -180,27 +180,23 @@ def _alert(msg: str, kind: str = "success") -> str:
 # Generación de formularios de resultados
 # ---------------------------------------------------------------------------
 
+_DIPSTICK_VALS = ["Negativo", "Trazas", "+", "++", "+++", "++++"]
+
+
 def _build_result_form_html(order_id: int, order_details: dict) -> str:
     """Genera el HTML del formulario de ingreso de resultados."""
     results = order_details.get("results", [])
-    pat = order_details.get("patient", {})
-    ord_inf = order_details.get("order", {})
 
     # Mapa de resultados existentes por nombre de test
     existing = {}
     for row in results:
         test_name = row[0]
-        raw_result = row[1]
-        sample_status = row[3] or "recibida"
-        sample_issue = row[4] or ""
-        observation = row[5] or ""
-        sample_type = row[6] or ""
         existing[test_name] = {
-            "raw": raw_result,
-            "sample_status": sample_status,
-            "sample_issue": sample_issue,
-            "observation": observation,
-            "sample_type": sample_type,
+            "raw": row[1],
+            "sample_status": row[3] or "recibida",
+            "sample_issue": row[4] or "",
+            "observation": row[5] or "",
+            "sample_type": row[6] or "",
         }
 
     def _parse_stored(raw):
@@ -217,33 +213,26 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
     def _get_existing_value(test_name, key):
         ex = existing.get(test_name, {})
         values = _parse_stored(ex.get("raw", ""))
-        if values:
-            return values.get(key, "")
-        # plain text result for single-field tests
-        raw = ex.get("raw", "")
-        if raw and not key:
+        return values.get(key, "") if values else ""
+
+    def _get_plain_result(test_name):
+        raw = existing.get(test_name, {}).get("raw", "")
+        if not raw:
+            return ""
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                v = data.get("value") or data.get("values", {})
+                if isinstance(v, dict):
+                    for val in v.values():
+                        return val or ""
+                return v or ""
+        except Exception:
             return raw
         return ""
 
-    def _get_plain_result(test_name):
-        ex = existing.get(test_name, {})
-        raw = ex.get("raw", "")
-        if raw:
-            try:
-                data = json.loads(raw)
-                if isinstance(data, dict):
-                    v = data.get("value") or data.get("values", {})
-                    if isinstance(v, dict):
-                        # single value template
-                        for val in v.values():
-                            return val or ""
-                    return v or ""
-            except Exception:
-                return raw
-        return ""
-
     fields_html = ""
-    auto_calc_js = []
+    extra_js = []   # auto-calc + diff-counter JS fragments
 
     for idx, row in enumerate(results):
         test_name = row[0]
@@ -264,10 +253,15 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
   <input type="hidden" name="test_{idx}_name" value="{safe_test}">
 """
 
-        # Build field inputs from template
         if template:
             fields = template.get("fields", [])
             fields_html += '<div class="test-fields">'
+
+            # Hemograma differential counter bar
+            is_hemograma = "hemograma" in test_name.lower()
+            if is_hemograma:
+                fields_html += f'<div class="diff-counter diff-pending" id="diff-counter-{idx}">Conteo diferencial: <span id="diff-sum-{idx}">0</span> / 100</div>'
+
             for fld in fields:
                 ftype = fld.get("type", "line")
                 if ftype == "section":
@@ -279,6 +273,7 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
                 reference = fld.get("reference", "")
                 unit = fld.get("unit", "")
                 placeholder = fld.get("placeholder", "")
+                quick_neg = fld.get("quick_negative", "")
                 field_input_name = f"test_{idx}_field_{key}"
                 existing_val = _get_existing_value(test_name, key)
                 safe_label = html.escape(label)
@@ -291,7 +286,7 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
                     pos_checked = 'checked' if existing_val == fld.get("positive_text", "Positivo") else ''
                     neg_checked = 'checked' if existing_val == fld.get("negative_text", "Negativo") else ''
                     fields_html += f"""
-<div class="form-group">
+<div class="form-group form-group--bool">
   <label class="field-label"{ref_tooltip}>{safe_label}</label>
   <div class="bool-options">
     <label class="bool-opt positive-opt">
@@ -304,11 +299,32 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
   {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
 </div>"""
 
+                elif ftype == "dipstick":
+                    dip_buttons = ""
+                    for dv in _DIPSTICK_VALS:
+                        is_active = "dip-active" if existing_val == dv else ""
+                        neg_cls = " dip-neg" if dv == "Negativo" else ""
+                        esc_dv = html.escape(dv)
+                        dip_buttons += f'<button type="button" class="dip-btn{neg_cls} {is_active}" data-val="{esc_dv}" onclick="setDipstick(this)">{esc_dv}</button>'
+                    fields_html += f"""
+<div class="form-group form-group--dipstick">
+  <label class="field-label"{ref_tooltip}>{safe_label}</label>
+  <div class="dipstick-opts" data-input="{field_input_name}">
+    {dip_buttons}
+    <input type="hidden" name="{field_input_name}" value="{html.escape(existing_val)}">
+  </div>
+  {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
+</div>"""
+
                 elif ftype == "text_area":
                     safe_val = html.escape(existing_val)
+                    qneg_btn = ""
+                    if quick_neg or "no se observan" in reference.lower():
+                        qv = html.escape(quick_neg or "No se observan")
+                        qneg_btn = f'<button type="button" class="btn-quick-neg" onclick="setQuickNeg(this,\'{qv}\')">(-) No obs.</button>'
                     fields_html += f"""
 <div class="form-group">
-  <label class="field-label">{safe_label}</label>
+  <label class="field-label">{safe_label}{qneg_btn}</label>
   <textarea name="{field_input_name}" class="form-textarea" rows="2" placeholder="{html.escape(placeholder)}">{safe_val}</textarea>
   {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
 </div>"""
@@ -321,7 +337,7 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
                     )
                     fields_html += f"""
 <div class="form-group">
-  <label class="field-label">{safe_label}</label>
+  <label class="field-label"{ref_tooltip}>{safe_label}</label>
   <select name="{field_input_name}" class="form-select">
     <option value="">-- Seleccionar --</option>
     {opts}
@@ -329,14 +345,17 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
   {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
 </div>"""
 
-                else:
-                    # line input (default)
+                else:  # line (default)
                     unit_label = f'<span class="field-unit">{html.escape(unit)}</span>' if unit else ''
                     safe_val = html.escape(str(existing_val))
                     field_id = f"fld_{idx}_{key}"
+                    qneg_btn = ""
+                    if quick_neg or "no se observan" in reference.lower():
+                        qv = html.escape(quick_neg or "No se observan")
+                        qneg_btn = f'<button type="button" class="btn-quick-neg" onclick="setQuickNeg(this,\'{qv}\')">(-) No obs.</button>'
                     fields_html += f"""
 <div class="form-group form-group--inline">
-  <label class="field-label"{ref_tooltip}>{safe_label}</label>
+  <label class="field-label"{ref_tooltip}>{safe_label}{qneg_btn}</label>
   <div class="input-with-unit">
     <input type="text" id="{field_id}" name="{field_input_name}" class="form-input"
            value="{safe_val}" placeholder="{html.escape(placeholder)}">
@@ -355,23 +374,49 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
                 only_if_empty = calc.get("only_if_empty", False)
                 src_id = f"fld_{idx}_{src_key}"
                 tgt_id = f"fld_{idx}_{tgt_key}"
-                auto_calc_js.append(f"""
+                extra_js.append(f"""
 (function() {{
   var src = document.getElementById('{src_id}');
   var tgt = document.getElementById('{tgt_id}');
   if (!src || !tgt) return;
   src.addEventListener('input', function() {{
     var val = parseFloat(src.value.replace(',', '.'));
-    if (isNaN(val)) {{ if(!'{only_if_empty}' || tgt.value === '') tgt.value = ''; return; }}
+    if (isNaN(val)) return;
     var result = {f'val / {operand}' if op == 'divide' else f'val * {operand}'};
     {'if (!tgt.value || tgt.value === "0") ' if only_if_empty else ''}tgt.value = result.toFixed({decimals});
   }});
 }})();""")
 
+            # Hemograma differential counter JS
+            if is_hemograma:
+                diff_keys = ['segmentados','abastonados','linfocitos','monocitos',
+                             'eosinofilos','basofilos','mielocitos','metamielocitos']
+                diff_ids_js = "[" + ",".join(f"'fld_{idx}_{k}'" for k in diff_keys) + "]"
+                extra_js.append(f"""
+(function() {{
+  var DIDS = {diff_ids_js};
+  var box = document.getElementById('diff-counter-{idx}');
+  var span = document.getElementById('diff-sum-{idx}');
+  if (!box || !span) return;
+  function updateDiff() {{
+    var s = 0;
+    DIDS.forEach(function(id) {{
+      var el = document.getElementById(id);
+      if (el) s += parseFloat(el.value.replace(',','.')) || 0;
+    }});
+    span.textContent = s.toFixed(1);
+    box.className = 'diff-counter ' + (Math.abs(s-100)<0.5 ? 'diff-ok' : s>100 ? 'diff-over' : 'diff-pending');
+  }}
+  DIDS.forEach(function(id) {{
+    var el = document.getElementById(id);
+    if (el) el.addEventListener('input', updateDiff);
+  }});
+  updateDiff();
+}})();""")
+
             fields_html += '</div>'  # close test-fields
 
         else:
-            # No template: plain textarea
             plain_val = html.escape(_get_plain_result(test_name))
             fields_html += f"""
 <div class="form-group" style="padding:12px">
@@ -379,22 +424,26 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
   <textarea name="test_{idx}_plain" class="form-textarea" rows="2">{plain_val}</textarea>
 </div>"""
 
-        # Sample status, issue, sample type, observation
+        # Sample status / meta row
         status_options = ["recibida", "pendiente", "rechazada"]
         status_opts_html = "".join(
             f'<option value="{s}" {"selected" if sample_status == s else ""}>{s.capitalize()}</option>'
             for s in status_options
         )
+        # Show "motivo rechazo" row only when rechazada
+        reject_display = "block" if sample_status == "rechazada" else "none"
         fields_html += f"""
   <div class="test-meta">
     <div class="form-group-row">
       <label>Estado muestra:</label>
-      <select name="test_{idx}_sample_status" class="form-select-sm">{status_opts_html}</select>
+      <select name="test_{idx}_sample_status" class="form-select-sm"
+              onchange="toggleRejectReason(this,{idx})">{status_opts_html}</select>
     </div>
-    <div class="form-group-row">
-      <label>Motivo (si aplica):</label>
+    <div class="form-group-row" id="reject-row-{idx}" style="display:{reject_display}">
+      <label>Motivo rechazo:</label>
       <input type="text" name="test_{idx}_sample_issue" class="form-input-sm"
-             value="{html.escape(sample_issue_val)}" placeholder="Ej. Muestra hemolizada">
+             value="{html.escape(sample_issue_val)}"
+             placeholder="Ej. Muestra hemolizada, cantidad insuficiente">
     </div>
     <div class="form-group-row">
       <label>Tipo de muestra:</label>
@@ -402,23 +451,46 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
              value="{html.escape(sample_type_val)}" placeholder="Ej. Sangre venosa">
     </div>
     <div class="form-group-row">
-      <label>Observación:</label>
+      <label>Obs. prueba:</label>
       <input type="text" name="test_{idx}_observation" class="form-input-sm"
              value="{html.escape(observation_val)}">
     </div>
   </div>
 </div>"""  # close test-fieldset
 
-    # Total de tests
     total_tests = len(results)
     js_block = ""
-    if auto_calc_js:
-        js_block = "<script>" + "".join(auto_calc_js) + "</script>"
+    if extra_js:
+        js_block = "<script>" + "".join(extra_js) + "\n" + _RESULT_FORM_COMMON_JS + "</script>"
+    else:
+        js_block = f"<script>{_RESULT_FORM_COMMON_JS}</script>"
 
     return f"""
 <input type="hidden" name="total_tests" value="{total_tests}">
 {fields_html}
 {js_block}
+"""
+
+
+_RESULT_FORM_COMMON_JS = """
+function setDipstick(btn) {
+  var container = btn.closest('.dipstick-opts');
+  container.querySelectorAll('.dip-btn').forEach(function(b){ b.classList.remove('dip-active'); });
+  btn.classList.add('dip-active');
+  container.querySelector('input[type=hidden]').value = btn.dataset.val;
+  markFormDirty();
+}
+function setQuickNeg(btn, val) {
+  var grp = btn.closest('.form-group');
+  var inp = grp.querySelector('input[type=text], textarea');
+  if (inp) { inp.value = val; }
+  btn.classList.add('active');
+  markFormDirty();
+}
+function toggleRejectReason(sel, idx) {
+  var row = document.getElementById('reject-row-' + idx);
+  if (row) row.style.display = sel.value === 'rechazada' ? 'block' : 'none';
+}
 """
 
 
@@ -449,10 +521,10 @@ def _parse_results_from_form(data: dict, multi_data: dict, total_tests: int) -> 
                 val = data.get(field_input_name, "").strip()
                 if val:
                     values[key] = val
-            if values:
-                result_value = json.dumps({"type": "structured",
-                                           "template": test_name,
-                                           "values": values})
+            # Always serialize (even if empty) so sample_status/observation are still saved
+            result_value = json.dumps({"type": "structured",
+                                       "template": test_name,
+                                       "values": values})
         else:
             result_value = data.get(f"test_{i}_plain", "").strip() or ""
 
@@ -548,6 +620,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 return self._handle_emitir_exportar_csv()
             return self._handle_emitir_list()
         if parts[0] == "analisis":
+            if len(parts) == 2 and parts[1] == "registro_pdf":
+                return self._handle_analisis_registro_pdf()
             return self._handle_analisis()
         if parts[0] == "configuracion":
             return self._handle_configuracion_get()
@@ -1281,18 +1355,73 @@ function eliminarOrden() {
       {pending_badge}
     </div>
   </div>
-  <form method="post" action="/resultados/{order_id}"
-        style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
+  <form id="result-form" method="post" action="/resultados/{order_id}"
+        style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;"
+        onsubmit="clearDraft()">
     <div class="module-body" style="padding-right:4px;">
       {form_html}
     </div>
     <div class="module-footer" style="display:flex; gap:10px; align-items:center;">
       <button type="submit" class="btn btn-primary">Guardar Resultados</button>
       <a href="/resultados" class="btn btn-secondary">Cancelar</a>
+      <span id="draft-saved" style="font-size:0.8rem;color:var(--muted);display:none">Borrador guardado</span>
     </div>
   </form>
 </div>
-{self._resultados_topbar_js()}"""
+{self._resultados_topbar_js()}
+<script>
+var _formDirty = false;
+var _DRAFT_KEY = 'resultados_draft_{order_id}';
+function markFormDirty() {{ _formDirty = true; saveDraft(); }}
+function saveDraft() {{
+  var form = document.getElementById('result-form');
+  if (!form) return;
+  var fd = new FormData(form);
+  var obj = {{}};
+  fd.forEach(function(v,k){{ obj[k] = v; }});
+  try {{ localStorage.setItem(_DRAFT_KEY, JSON.stringify(obj)); }} catch(e) {{}}
+  var ds = document.getElementById('draft-saved');
+  if (ds) {{ ds.style.display=''; setTimeout(function(){{ds.style.display='none';}},1500); }}
+}}
+function clearDraft() {{
+  try {{ localStorage.removeItem(_DRAFT_KEY); }} catch(e) {{}}
+  _formDirty = false;
+}}
+function restoreDraft() {{
+  var raw;
+  try {{ raw = localStorage.getItem(_DRAFT_KEY); }} catch(e) {{ return; }}
+  if (!raw) return;
+  var obj;
+  try {{ obj = JSON.parse(raw); }} catch(e) {{ return; }}
+  var form = document.getElementById('result-form');
+  if (!form) return;
+  Object.keys(obj).forEach(function(k) {{
+    var els = form.querySelectorAll('[name="'+k+'"]');
+    els.forEach(function(el) {{
+      if (el.type === 'radio') {{ if (el.value === obj[k]) el.checked = true; }}
+      else if (el.type === 'hidden') {{ el.value = obj[k]; }}
+      else {{ el.value = obj[k]; }}
+    }});
+  }});
+  // Re-sync dipstick buttons
+  form.querySelectorAll('.dipstick-opts').forEach(function(cont) {{
+    var inp = cont.querySelector('input[type=hidden]');
+    if (!inp) return;
+    var val = inp.value;
+    cont.querySelectorAll('.dip-btn').forEach(function(b) {{
+      b.classList.toggle('dip-active', b.dataset.val === val);
+    }});
+  }});
+  console.log('Borrador restaurado para orden {order_id}');
+}}
+window.addEventListener('DOMContentLoaded', restoreDraft);
+document.addEventListener('change', function(e) {{
+  if (e.target.closest('#result-form')) markFormDirty();
+}});
+window.addEventListener('beforeunload', function(e) {{
+  if (_formDirty) {{ e.preventDefault(); e.returnValue = ''; }}
+}});
+</script>"""
         self._respond_html(_base_layout(content, "resultados", user))
 
     def _handle_resultados_eliminar(self, order_id: int):
@@ -1772,6 +1901,7 @@ function cargarEmitir() {{
     <tbody>{trows or '<tr><td colspan="5" class="text-center muted">Sin datos en el rango seleccionado</td></tr>'}</tbody>
   </table>
 </div>"""
+            n_rows = len(rows_data)
             alert_html = _alert(error_msg, "error") if error_msg else ""
             tab_content = f"""{alert_html}
 <form method="get" action="/analisis" style="display:flex; gap:8px; align-items:flex-end; margin-bottom:10px; flex-wrap:wrap;">
@@ -1781,8 +1911,11 @@ function cargarEmitir() {{
   <div><label class="field-label">Hasta</label>
     <input type="date" name="hasta" class="form-input-compact" value="{html.escape(hasta)}"></div>
   <button type="submit" class="btn btn-primary btn-sm">Consultar</button>
+  <a href="/analisis/registro_pdf?desde={html.escape(desde)}&hasta={html.escape(hasta)}"
+     class="btn btn-secondary btn-sm" target="_blank">Exportar PDF</a>
   <a href="/emitir/exportar_csv?desde={html.escape(desde)}&hasta={html.escape(hasta)}"
      class="btn btn-secondary btn-sm">Exportar CSV</a>
+  <span class="muted" style="font-size:0.82rem;">{n_rows} resultado(s)</span>
 </form>
 {table_html}"""
 
@@ -1820,33 +1953,44 @@ function cargarEmitir() {{
                         "date": (o_date or "")[:10],
                         "sample": (o_sample or "")[:10],
                         "emitted": o_emitted,
+                        "requested_by": o_req or "—",
+                        "fua": o_fua or "—",
+                        "insurance": o_ins or "—",
+                        "age": o_age,
                         "tests": []
                     }
                 if not ot_del:
-                    orders_map[o_id]["tests"].append((t_name, t_cat, ot_result))
+                    orders_map[o_id]["tests"].append((t_name, t_cat, ot_result, ot_ss))
                 if not patient_info:
+                    gest_str = "Sí"
+                    if p_preg and p_gest_wk:
+                        gest_str = f"Sí ({p_gest_wk} sem)"
+                    elif not p_preg:
+                        gest_str = "No"
                     patient_info = {
-                        "name": f"{p_first or ''} {p_last or ''}".strip(),
+                        "name": f"{p_last or ''} {p_first or ''}".strip(),
                         "doc": f"{p_doc_type or ''} {p_doc_num or ''}".strip(),
                         "sex": p_sex or "—", "birth": (p_birth or "")[:10],
                         "hcl": p_hcl or "—", "origin": p_origin or "—",
                         "height": p_height, "weight": p_weight, "bp": p_bp or "—",
-                        "preg": p_preg, "ins": o_ins or "—",
+                        "gestante": gest_str,
                     }
 
             # Left column: order list
             order_list_html = ""
             if orders_map:
                 for oid, oinfo in orders_map.items():
-                    em_tag = " ✓" if oinfo["emitted"] else ""
-                    active = "style='font-weight:700; color:var(--primary);'" if str(oid) == sel_order else ""
+                    em_tag = ' <span style="color:#28a745; font-size:0.75rem;">&#10003; Emitida</span>' if oinfo["emitted"] else ""
+                    is_sel = str(oid) == sel_order
+                    sel_style = "background:#eef2f8; font-weight:700;" if is_sel else ""
                     href = f"/analisis?tab=historial&doc={html.escape(doc_q)}&apellido={html.escape(apellido_q)}&order_id={oid}"
+                    n_tests = len(oinfo['tests'])
                     order_list_html += f"""
-<div style="padding:6px 8px; border-bottom:1px solid var(--border);">
-  <a href="{href}" {active} style="text-decoration:none; display:block;">
-    <span style="font-size:0.8rem; color:var(--muted);">{oinfo['date']}</span>
-    <span style="font-weight:600;">Orden #{oid}{em_tag}</span>
-    <span style="font-size:0.78rem; color:var(--muted); display:block;">{len(oinfo['tests'])} prueba(s)</span>
+<div style="padding:6px 8px; border-bottom:1px solid var(--border); {sel_style}">
+  <a href="{href}" style="text-decoration:none; display:block; color:inherit;">
+    <div style="font-size:0.78rem; color:var(--muted);">{oinfo['date']}{em_tag}</div>
+    <div style="font-weight:600; color:var(--primary);">Orden #{oid}</div>
+    <div style="font-size:0.75rem; color:var(--muted);">{n_tests} prueba(s)</div>
   </a>
 </div>"""
             else:
@@ -1854,21 +1998,33 @@ function cargarEmitir() {{
 
             # Center column: patient clinical summary
             pat_html = ""
+            # Per-order data (shown in center column when an order is selected)
+            sel_order_info = orders_map.get(int(sel_order)) if sel_order and sel_order.isdigit() and int(sel_order) in orders_map else None
             if patient_info:
-                def row2(label, val):
-                    return f'<tr><td class="muted" style="font-size:0.8rem; white-space:nowrap;">{label}</td><td style="font-size:0.85rem;">{html.escape(str(val))}</td></tr>'
+                def _r2(label, val):
+                    return f'<tr><td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px;">{label}</td><td style="font-size:0.83rem; padding:3px 6px;">{html.escape(str(val))}</td></tr>'
+                order_rows = ""
+                if sel_order_info:
+                    order_rows = f"""
+<tr><td colspan="2" style="background:#eef2f8; font-size:0.73rem; font-weight:700; text-transform:uppercase; color:var(--muted); padding:4px 6px;">Datos de la orden</td></tr>
+{_r2("F. muestra", sel_order_info['sample'] or '—')}
+{_r2("Médico solicitante", sel_order_info['requested_by'])}
+{_r2("Seguro", sel_order_info['insurance'])}
+{_r2("FUA", sel_order_info['fua'])}"""
                 pat_html = f"""
 <table style="width:100%; border-collapse:collapse;">
-  {row2("Paciente", patient_info['name'])}
-  {row2("Documento", patient_info['doc'])}
-  {row2("Sexo", patient_info['sex'])}
-  {row2("F. Nac.", patient_info['birth'])}
-  {row2("HCL", patient_info['hcl'])}
-  {row2("Origen", patient_info['origin'])}
-  {row2("Talla", f"{patient_info['height']} cm" if patient_info['height'] else '—')}
-  {row2("Peso", f"{patient_info['weight']} kg" if patient_info['weight'] else '—')}
-  {row2("Presion", patient_info['bp'])}
-  {row2("Seguro", patient_info['ins'])}
+  <tr><td colspan="2" style="background:#eef2f8; font-size:0.73rem; font-weight:700; text-transform:uppercase; color:var(--muted); padding:4px 6px;">Datos del paciente</td></tr>
+  {_r2("Paciente", patient_info['name'])}
+  {_r2("Documento", patient_info['doc'])}
+  {_r2("Sexo", patient_info['sex'])}
+  {_r2("F. Nac.", patient_info['birth'])}
+  {_r2("HCL", patient_info['hcl'])}
+  {_r2("Origen", patient_info['origin'])}
+  {_r2("Talla", f"{patient_info['height']} cm" if patient_info['height'] else '—')}
+  {_r2("Peso", f"{patient_info['weight']} kg" if patient_info['weight'] else '—')}
+  {_r2("Presión", patient_info['bp'])}
+  {_r2("Gestante", patient_info['gestante'])}
+  {order_rows}
 </table>"""
             else:
                 pat_html = '<p class="muted text-center" style="padding:16px;">Busque un paciente</p>'
@@ -1877,38 +2033,53 @@ function cargarEmitir() {{
             results_html = ""
             if sel_order and sel_order in {str(k) for k in orders_map}:
                 oid_sel = int(sel_order)
-                tests = orders_map[oid_sel]["tests"]
-                trows = ""
-                for t_name, t_cat, ot_result in tests:
-                    disp = ot_result or "—"
-                    try:
-                        import json as _json
-                        d = _json.loads(ot_result)
-                        if isinstance(d, dict) and d.get("type") == "structured":
-                            disp = "; ".join(
-                                f"{k}: {v}" for k, v in d.get("values", {}).items()
-                                if v not in ("", None)
-                            ) or "—"
-                        elif isinstance(d, dict):
-                            disp = str(d.get("value", ot_result) or "—")
-                    except Exception:
-                        pass
-                    trows += f"""<tr>
-  <td style="font-size:0.83rem;">{html.escape(t_name or '')}</td>
-  <td style="font-size:0.83rem; max-width:200px; word-break:break-word;">{html.escape(str(disp))}</td>
-</tr>"""
+                oinfo_sel = orders_map[oid_sel]
+                tests = oinfo_sel["tests"]
+                blocks = ""
+                for t_name, t_cat, ot_result, ot_ss in tests:
+                    # Parse result into table rows
+                    inner = ""
+                    rejected = (ot_ss == "rechazada")
+                    if rejected:
+                        inner = '<span style="color:#dc3545; font-weight:600;">Muestra rechazada</span>'
+                    elif ot_result:
+                        try:
+                            d = json.loads(ot_result)
+                            if isinstance(d, dict) and d.get("type") == "structured":
+                                vals = {k: v for k, v in d.get("values", {}).items() if v not in ("", None)}
+                                if vals:
+                                    inner = "<table style='width:100%; border-collapse:collapse;'>"
+                                    for k, v in vals.items():
+                                        inner += f'<tr><td style="font-size:0.75rem; color:var(--muted); padding:1px 4px; white-space:nowrap;">{html.escape(str(k))}</td><td style="font-size:0.82rem; padding:1px 4px; word-break:break-word;">{html.escape(str(v))}</td></tr>'
+                                    inner += "</table>"
+                                else:
+                                    inner = '<span class="muted">Sin datos</span>'
+                            elif isinstance(d, dict):
+                                v = d.get("value", "") or d.get("values", {})
+                                inner = html.escape(str(v)) if v else '<span class="muted">—</span>'
+                        except Exception:
+                            inner = html.escape(str(ot_result))
+                    else:
+                        inner = '<span class="muted">Pendiente</span>'
+
+                    blocks += f"""
+<div style="border:1px solid var(--border); border-radius:6px; margin-bottom:6px; overflow:hidden;">
+  <div style="background:#eef2f8; padding:4px 8px; font-size:0.8rem; font-weight:700; display:flex; justify-content:space-between;">
+    <span>{html.escape(t_name or '')}</span>
+    <span style="color:var(--muted); font-weight:400;">{html.escape(t_cat or '')}</span>
+  </div>
+  <div style="padding:4px 8px;">{inner}</div>
+</div>"""
+
+                pdf_link = f'<a href="/emitir/{oid_sel}/pdf" target="_blank" class="btn btn-secondary btn-sm">PDF</a>' if oinfo_sel["emitted"] else f'<a href="/emitir/{oid_sel}/pdf" target="_blank" class="btn btn-primary btn-sm">Generar PDF</a>'
                 results_html = f"""
-<div style="font-size:0.8rem; color:var(--muted); margin-bottom:6px;">
-  Orden #{oid_sel} — {orders_map[oid_sel]['date']}
-  {'— <a href="/emitir/' + str(oid_sel) + '/pdf" target="_blank" style="color:var(--primary);">PDF</a>' if orders_map[oid_sel]['emitted'] else ''}
+<div style="display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+  <span style="font-weight:700; color:var(--primary);">Orden #{oid_sel}</span>
+  <span class="muted" style="font-size:0.8rem;">{oinfo_sel['date']}</span>
+  {pdf_link}
+  <a href="/resultados?order_id={oid_sel}" class="btn btn-secondary btn-sm">Anotar Resultados</a>
 </div>
-<table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
-  <thead><tr style="background:var(--bg-alt);">
-    <th style="text-align:left; padding:4px 6px;">Examen</th>
-    <th style="text-align:left; padding:4px 6px;">Resultado</th>
-  </tr></thead>
-  <tbody>{trows or '<tr><td colspan="2" class="muted text-center">Sin resultados</td></tr>'}</tbody>
-</table>"""
+{blocks or '<p class="muted text-center">Sin resultados</p>'}"""
             elif orders_map:
                 results_html = '<p class="muted text-center" style="padding:16px;">Seleccione una orden de la lista</p>'
             else:
@@ -1960,6 +2131,37 @@ function cargarEmitir() {{
   </div>
 </div>"""
         self._respond_html(_base_layout(content, "analisis", user))
+
+    def _handle_analisis_registro_pdf(self):
+        """Genera PDF de registro de pruebas para un rango de fechas."""
+        user = self._require_login()
+        if not user:
+            return
+        params  = _get_query_params(self.path)
+        today   = datetime.date.today().isoformat()
+        desde   = params.get("desde", today)
+        hasta   = params.get("hasta", today)
+        db = new_db()
+        try:
+            start_dt = (desde + " 00:00:00") if desde else None
+            end_dt   = (hasta + " 23:59:59") if hasta else None
+            rows = db.get_results_in_range(start_dt, end_dt)
+        except Exception as e:
+            self.send_error(500, str(e))
+            return
+        from pdf_generator import generate_registro_pdf
+        try:
+            pdf_bytes = generate_registro_pdf(rows, desde, hasta)
+        except Exception as e:
+            self.send_error(500, f"Error al generar PDF: {e}")
+            return
+        fname = f"registro_{desde}_{hasta}.pdf"
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+        self.send_header("Content-Length", str(len(pdf_bytes)))
+        self.end_headers()
+        self.wfile.write(pdf_bytes)
 
     # ===========================================================
     # MÓDULO CONFIGURACIÓN
