@@ -96,32 +96,51 @@ def _base_layout(content_html: str, active_nav: str, user: dict) -> str:
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Laboratorio Clínico</title>
+  <title>Laboratorio P.S. Inapari</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body class="app-body">
   <div class="app-shell">
     <nav class="side-menu">
-      <div class="side-menu__title">LABORATORIO CLÍNICO</div>
+      <div class="side-menu__title">Laboratorio P.S.<br>Inapari - 002789</div>
       <div class="side-menu__nav">
         {nav_links_html}
       </div>
       <div class="side-menu__logout">
         <form method="post" action="/logout">
-          <button type="submit" class="logout-btn">Cerrar sesión</button>
+          <button type="submit" class="logout-btn">Cerrar sesion ({display_name})</button>
         </form>
       </div>
     </nav>
-    <main class="content-area">
-      <div class="topbar">
-        <h1>Laboratorio P.S. Iñapari</h1>
-        <p>Bienvenido, <strong>{display_name}</strong></p>
+    <main class="content-area" style="padding:14px; display:flex; flex-direction:column; overflow:hidden;">
+      <div class="topbar" style="padding:10px 16px; margin-bottom:10px; display:flex; align-items:center; gap:12px;">
+        <div>
+          <strong style="font-size:1rem;">Laboratorio P.S. Inapari - 002789</strong>
+        </div>
+        <span class="topbar-clock" id="main-clock"></span>
       </div>
-      <div class="page-content">
+      <div class="page-content" style="flex:1; overflow:hidden; min-height:0;">
         {content_html}
       </div>
     </main>
   </div>
+  <script>
+    (function(){{
+      function updateClock(){{
+        var now = new Date();
+        var d = String(now.getDate()).padStart(2,'0');
+        var mo = String(now.getMonth()+1).padStart(2,'0');
+        var y = now.getFullYear();
+        var h = String(now.getHours()).padStart(2,'0');
+        var mi = String(now.getMinutes()).padStart(2,'0');
+        var s = String(now.getSeconds()).padStart(2,'0');
+        var el = document.getElementById('main-clock');
+        if(el) el.textContent = d+'/'+mo+'/'+y+' '+h+':'+mi+':'+s;
+      }}
+      updateClock();
+      setInterval(updateClock, 1000);
+    }})();
+  </script>
 </body>
 </html>"""
 
@@ -525,6 +544,8 @@ class WebHandler(BaseHTTPRequestHandler):
         if parts[0] == "emitir":
             if len(parts) == 3 and parts[1].isdigit() and parts[2] == "pdf":
                 return self._handle_emitir_pdf(int(parts[1]))
+            if len(parts) == 2 and parts[1] == "exportar_csv":
+                return self._handle_emitir_exportar_csv()
             return self._handle_emitir_list()
         if parts[0] == "analisis":
             return self._handle_analisis()
@@ -547,6 +568,8 @@ class WebHandler(BaseHTTPRequestHandler):
                 return self._handle_registro_orden()
         if parts[0] == "resultados" and len(parts) == 2 and parts[1].isdigit():
             return self._handle_resultados_save(int(parts[1]))
+        if parts[0] == "resultados" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "eliminar":
+            return self._handle_resultados_eliminar(int(parts[1]))
         if parts[0] == "emitir" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "marcar":
             return self._handle_emitir_marcar(int(parts[1]))
         if parts[0] == "configuracion":
@@ -652,8 +675,9 @@ class WebHandler(BaseHTTPRequestHandler):
         db = new_db()
         all_tests = db.get_all_tests()
         requesters = db.get_distinct_requesters()
+        pending_count = len(db.get_pending_orders())
 
-        # Group tests by category
+        # Group tests by category in CATEGORY_DISPLAY_ORDER
         categories: dict = {}
         for name, cat in all_tests:
             cat = cat or "OTROS"
@@ -666,19 +690,19 @@ class WebHandler(BaseHTTPRequestHandler):
             if cat not in CATEGORY_DISPLAY_ORDER:
                 ordered_cats.append((cat, tests))
 
+        # Build test checkboxes — 2-column grid, no accordion
         tests_html = ""
         for cat_name, tests_list in ordered_cats:
             safe_cat = html.escape(cat_name)
-            checkboxes = ""
+            items = ""
             for t in tests_list:
                 safe_t = html.escape(t)
-                checked = "checked" if selected_tests and t in selected_tests else ""
-                checkboxes += f'<label class="checkbox-label"><input type="checkbox" name="examenes" value="{safe_t}" {checked}> {safe_t}</label>\n'
-            tests_html += f"""
-<details class="category-group">
-  <summary class="category-group__title">{safe_cat}</summary>
-  <div class="category-group__tests">{checkboxes}</div>
-</details>"""
+                chk = "checked" if selected_tests and t in selected_tests else ""
+                items += (f'<label class="exam-check-item">'
+                          f'<input type="checkbox" name="examenes" value="{safe_t}" {chk}>'
+                          f'<span>{safe_t}</span></label>\n')
+            tests_html += f'<div class="test-category-label">{safe_cat}</div>\n'
+            tests_html += f'<div class="test-checkbox-grid">{items}</div>\n'
 
         # Requesters datalist
         requesters_opts = "".join(f'<option value="{html.escape(r)}">' for r in requesters)
@@ -702,167 +726,280 @@ class WebHandler(BaseHTTPRequestHandler):
             f'<option value="{s}" {"selected" if pv("insurance_type", "SIS") == s else ""}>{s}</option>'
             for s in ["SIS", "SOAT", "PARTICULAR", "OTROS"]
         )
+        origin_opts = "".join(
+            f'<option value="{o}" {"selected" if pv("origin") == o else ""}>{o}</option>'
+            for o in ["P.S Inapari", "C.S. Inapari", "Comunidades", "Hospital", "Otro"]
+        )
         pregnant_checked = "checked" if p.get("is_pregnant") else ""
+        gest_display = "block" if p.get("is_pregnant") else "none"
         today_str = datetime.date.today().isoformat()
 
         alert_html = _alert(message, message_kind) if message else ""
 
         content = f"""
 {alert_html}
-<h2 class="page-title">Registro de Paciente</h2>
+<div class="alertas-bar">
+  Alertas: <a href="/resultados">Ver pendientes ({pending_count})</a>
+</div>
 
-<form method="post" action="/registro/buscar" class="card-form">
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Tipo de documento</label>
-      <select name="doc_type" class="form-select">
-        {doc_type_opts}
-      </select>
-    </div>
-    <div class="form-group">
-      <label class="field-label">Número de documento</label>
-      <input type="text" name="doc_number" class="form-input"
-             value="{pv('doc_number')}" placeholder="Ej. 12345678">
-    </div>
-    <div class="form-group form-group--action">
-      <label class="field-label">&nbsp;</label>
-      <button type="submit" class="btn btn-secondary">🔍 Buscar paciente</button>
-    </div>
-  </div>
-</form>
+<form id="form-registro" method="post" action="/registro/orden" style="flex:1;min-height:0;display:flex;flex-direction:column;">
+  <input type="hidden" name="doc_type" id="hid_doc_type" value="{pv('doc_type', 'DNI')}">
+  <input type="hidden" name="doc_number" id="hid_doc_number" value="{pv('doc_number')}">
 
-<form method="post" action="/registro/orden" class="card-form" style="margin-top:16px">
-  <input type="hidden" name="doc_type" value="{pv('doc_type', 'DNI')}">
-  <input type="hidden" name="doc_number" value="{pv('doc_number')}">
+  <div class="registro-grid" style="flex:1;min-height:0;">
 
-  <div class="section-title">Datos del paciente</div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Nombres *</label>
-      <input type="text" name="first_name" class="form-input"
-             value="{pv('first_name')}" required placeholder="Nombres">
+    <!-- LEFT: Patient form -->
+    <div class="registro-form">
+
+      <!-- Documento search bar -->
+      <div class="form-row-compact" style="align-items:flex-end;">
+        <div class="form-group-compact" style="flex:0 0 90px;">
+          <label>Documento</label>
+          <select id="in_doc_type" class="form-select-compact" onchange="document.getElementById('hid_doc_type').value=this.value">
+            {doc_type_opts}
+          </select>
+        </div>
+        <div class="form-group-compact" style="flex:1;">
+          <label>&nbsp;</label>
+          <input id="in_doc_number" type="text" class="form-input-compact"
+                 value="{pv('doc_number')}" placeholder="N° documento"
+                 onchange="document.getElementById('hid_doc_number').value=this.value">
+        </div>
+        <div style="padding-bottom:2px;">
+          <button type="button" class="btn btn-secondary btn-sm" onclick="buscarPaciente()">Buscar</button>
+        </div>
+      </div>
+
+      <!-- Procedencia -->
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:0 0 160px;">
+          <label>Procedencia</label>
+          <select name="origin" id="sel_origin" class="form-select-compact" onchange="toggleProcOtro()">
+            {origin_opts}
+          </select>
+        </div>
+        <div class="form-group-compact" id="proc_otro_div" style="flex:1;display:none;">
+          <label>Especifique</label>
+          <input type="text" name="origin_text" class="form-input-compact" placeholder="Especifique procedencia">
+        </div>
+      </div>
+
+      <!-- Nombre / Apellidos -->
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:1;">
+          <label>Nombre *</label>
+          <input type="text" name="first_name" class="form-input-compact" value="{pv('first_name')}" required placeholder="Nombres">
+        </div>
+      </div>
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:1;">
+          <label>Apellidos *</label>
+          <input type="text" name="last_name" class="form-input-compact" value="{pv('last_name')}" required placeholder="Apellidos">
+        </div>
+      </div>
+
+      <!-- F. Nacimiento / Edad / Sexo -->
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:1;">
+          <label>F. Nacimiento</label>
+          <input type="date" id="birth_date_input" name="birth_date" class="form-input-compact" value="{pv('birth_date')}">
+        </div>
+        <div class="form-group-compact" style="flex:0 0 70px;">
+          <label>Edad</label>
+          <input type="number" id="age_years_input" name="age_years" class="form-input-compact"
+                 value="{pv('age_years')}" min="0" max="150" placeholder="Auto">
+        </div>
+        <div class="form-group-compact" style="flex:0 0 110px;">
+          <label>Sexo</label>
+          <select name="sex" class="form-select-compact">{sex_opts}</select>
+        </div>
+      </div>
+
+      <!-- HCL -->
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:1;">
+          <label>HCL</label>
+          <input type="text" name="hcl" class="form-input-compact" value="{pv('hcl')}">
+        </div>
+      </div>
+
+      <!-- Talla / Peso / P.Art -->
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:1;">
+          <label>Talla (cm)</label>
+          <input type="text" name="height" class="form-input-compact" value="{pv('height')}" placeholder="cm">
+        </div>
+        <div class="form-group-compact" style="flex:1;">
+          <label>Peso (kg)</label>
+          <input type="text" name="weight" class="form-input-compact" value="{pv('weight')}" placeholder="kg">
+        </div>
+        <div class="form-group-compact" style="flex:1;">
+          <label>P. Arterial</label>
+          <input type="text" name="blood_pressure" class="form-input-compact"
+                 value="{pv('blood_pressure')}" placeholder="120/80">
+        </div>
+      </div>
+
+      <!-- Diagnóstico presuntivo -->
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:1;">
+          <label>Diagnostico presuntivo</label>
+          <input type="text" name="diagnosis" class="form-input-compact"
+                 value="{pv('diagnosis')}" placeholder="Ej. Sindrome febril">
+        </div>
+      </div>
+
+      <!-- Seguro / FUA -->
+      <div class="form-row-compact">
+        <div class="form-group-compact" style="flex:1;">
+          <label>Tipo de seguro</label>
+          <select name="insurance_type" class="form-select-compact">{insurance_opts}</select>
+        </div>
+        <div class="form-group-compact" style="flex:1;">
+          <label>N FUA</label>
+          <input type="text" name="fua_number" class="form-input-compact" value="{pv('fua_number')}">
+        </div>
+      </div>
+
+      <!-- Observaciones -->
+      <div class="form-row-compact" style="align-items:flex-end;">
+        <div class="form-group-compact" style="flex:1;">
+          <label>Observaciones</label>
+          <input type="text" id="obs_input" name="observations" class="form-input-compact"
+                 value="{pv('observations', 'N/A')}" placeholder="Observaciones">
+        </div>
+        <div style="padding-bottom:2px;">
+          <button type="button" class="btn btn-secondary btn-sm"
+                  onclick="document.getElementById('obs_input').value='N/A'">Sin obs.</button>
+        </div>
+      </div>
+
+      <!-- Gestante -->
+      <div class="form-row-compact" style="align-items:center;gap:12px;">
+        <label style="display:flex;align-items:center;gap:5px;font-size:0.88rem;">
+          <input type="checkbox" id="pregnant_check" name="is_pregnant" value="1" {pregnant_checked}>
+          Gestante
+        </label>
+        <div id="gest-fields" style="display:{gest_display};display:flex;gap:8px;">
+          <div class="form-group-compact" style="margin-bottom:0;">
+            <label>Semanas</label>
+            <input type="number" name="gestational_age_weeks" class="form-input-compact"
+                   value="{pv('gestational_age_weeks')}" min="0" max="45" style="width:60px;">
+          </div>
+          <div class="form-group-compact" style="margin-bottom:0;">
+            <label>FPP</label>
+            <input type="date" name="expected_delivery_date" class="form-input-compact"
+                   value="{pv('expected_delivery_date')}">
+          </div>
+        </div>
+      </div>
+
+      <!-- F. Muestra -->
+      <div class="form-row-compact" style="align-items:center;">
+        <div class="form-group-compact" style="flex:0 0 160px;">
+          <label>F. muestra</label>
+          <input type="date" id="sample_date_input" name="sample_date" class="form-input-compact" value="{today_str}">
+        </div>
+        <div style="padding-top:14px;">
+          <label style="display:flex;align-items:center;gap:5px;font-size:0.88rem;">
+            <input type="checkbox" id="hoy_check" checked onchange="toggleHoy()"> Hoy
+          </label>
+        </div>
+      </div>
+
+      <!-- Solicitante -->
+      <div class="form-group-compact">
+        <label>Solicitante</label>
+        <input type="text" name="requested_by" class="form-input-compact"
+               value="{pv('requested_by')}" list="requesters-list"
+               placeholder="Seleccione o escriba el medico solicit...">
+        <datalist id="requesters-list">{requesters_opts}</datalist>
+      </div>
+
+    </div><!-- end registro-form -->
+
+    <!-- RIGHT: Test selector -->
+    <div class="test-panel">
+      <div class="test-panel-header">
+        <span class="test-count-badge">Pruebas seleccionadas: <span id="test-count">0</span></span>
+        <button type="button" class="btn btn-secondary btn-sm" onclick="borrarPruebas()">Borrar todas las pruebas</button>
+      </div>
+      <div class="test-panel-body" id="test-panel-body">
+        {tests_html}
+      </div>
     </div>
-    <div class="form-group">
-      <label class="field-label">Apellidos *</label>
-      <input type="text" name="last_name" class="form-input"
-             value="{pv('last_name')}" required placeholder="Apellidos">
-    </div>
-  </div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Fecha de nacimiento</label>
-      <input type="date" id="birth_date_input" name="birth_date" class="form-input"
-             value="{pv('birth_date')}">
-    </div>
-    <div class="form-group">
-      <label class="field-label">Edad (años)</label>
-      <input type="number" id="age_years_input" name="age_years" class="form-input"
-             value="{pv('age_years')}" min="0" max="150" placeholder="Auto-calculada">
-    </div>
-    <div class="form-group">
-      <label class="field-label">Sexo</label>
-      <select name="sex" class="form-select">{sex_opts}</select>
-    </div>
-  </div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Procedencia</label>
-      <input type="text" name="origin" class="form-input" value="{pv('origin')}">
-    </div>
-    <div class="form-group">
-      <label class="field-label">HCL (Historia Clínica)</label>
-      <input type="text" name="hcl" class="form-input" value="{pv('hcl')}">
-    </div>
-  </div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Talla (cm)</label>
-      <input type="text" name="height" class="form-input" value="{pv('height')}">
-    </div>
-    <div class="form-group">
-      <label class="field-label">Peso (kg)</label>
-      <input type="text" name="weight" class="form-input" value="{pv('weight')}">
-    </div>
-    <div class="form-group">
-      <label class="field-label">Presión arterial</label>
-      <input type="text" name="blood_pressure" class="form-input"
-             value="{pv('blood_pressure')}" placeholder="Ej. 120/80">
-    </div>
-  </div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="checkbox-label">
-        <input type="checkbox" id="pregnant_check" name="is_pregnant" value="1" {pregnant_checked}>
-        Gestante
-      </label>
-    </div>
-    <div class="form-group" id="gest-fields" style="display:{'block' if pregnant_checked else 'none'}">
-      <label class="field-label">Semanas gestacionales</label>
-      <input type="number" name="gestational_age_weeks" class="form-input"
-             value="{pv('gestational_age_weeks')}" min="0" max="45">
-    </div>
-    <div class="form-group" id="edd-field" style="display:{'block' if pregnant_checked else 'none'}">
-      <label class="field-label">FPP (Fecha probable parto)</label>
-      <input type="date" name="expected_delivery_date" class="form-input"
-             value="{pv('expected_delivery_date')}">
-    </div>
+
+  </div><!-- end registro-grid -->
+
+  <!-- Footer buttons -->
+  <div class="module-footer-btns" style="margin-top:10px;padding-top:8px;border-top:1px solid var(--border);">
+    <button type="submit" name="_action" value="registro" class="btn btn-primary btn-full">Registrar paciente y pruebas</button>
+    <button type="button" class="btn btn-secondary btn-full" onclick="limpiarFormulario()">Registrar nuevo paciente</button>
+    <a href="/resultados" class="btn btn-secondary btn-full" style="text-align:center;">Anotar resultado de este paciente</a>
   </div>
 
-  <div class="section-title">Datos de la orden</div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Médico solicitante</label>
-      <input type="text" name="requested_by" class="form-input"
-             value="{pv('requested_by')}" list="requesters-list">
-      <datalist id="requesters-list">{requesters_opts}</datalist>
-    </div>
-    <div class="form-group">
-      <label class="field-label">Tipo de seguro</label>
-      <select name="insurance_type" class="form-select">{insurance_opts}</select>
-    </div>
-    <div class="form-group">
-      <label class="field-label">N° FUA</label>
-      <input type="text" name="fua_number" class="form-input" value="{pv('fua_number')}">
-    </div>
-  </div>
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Diagnóstico</label>
-      <input type="text" name="diagnosis" class="form-input" value="{pv('diagnosis')}">
-    </div>
-    <div class="form-group">
-      <label class="field-label">Fecha de toma de muestra</label>
-      <input type="date" name="sample_date" class="form-input" value="{today_str}">
-    </div>
-  </div>
-  <div class="form-group">
-    <label class="field-label">Observaciones</label>
-    <textarea name="observations" class="form-textarea" rows="2"></textarea>
-  </div>
-
-  <div class="section-title">Seleccionar exámenes</div>
-  <div id="test-selector">
-    {tests_html}
-  </div>
-
-  <div style="margin-top:20px">
-    <button type="submit" class="btn btn-primary">Crear orden</button>
-  </div>
 </form>
 
 <script>
-document.getElementById('pregnant_check').addEventListener('change', function() {{
-  var show = this.checked;
-  document.getElementById('gest-fields').style.display = show ? 'block' : 'none';
-  document.getElementById('edd-field').style.display = show ? 'block' : 'none';
+// Count checked tests
+function updateCount(){{
+  var n = document.querySelectorAll('input[name="examenes"]:checked').length;
+  document.getElementById('test-count').textContent = n;
+}}
+document.querySelectorAll('input[name="examenes"]').forEach(function(cb){{
+  cb.addEventListener('change', updateCount);
 }});
-document.getElementById('birth_date_input').addEventListener('change', function() {{
-  var bd = new Date(this.value);
-  if (isNaN(bd.getTime())) return;
-  var today = new Date();
-  var age = Math.floor((today - bd) / (365.25 * 24 * 3600 * 1000));
-  document.getElementById('age_years_input').value = age;
+updateCount();
+
+function borrarPruebas(){{
+  document.querySelectorAll('input[name="examenes"]').forEach(function(cb){{ cb.checked=false; }});
+  updateCount();
+}}
+
+function limpiarFormulario(){{
+  document.getElementById('form-registro').reset();
+  document.getElementById('test-count').textContent='0';
+  document.getElementById('hid_doc_type').value='DNI';
+  document.getElementById('hid_doc_number').value='';
+}}
+
+function buscarPaciente(){{
+  var dt=document.getElementById('in_doc_type').value;
+  var dn=document.getElementById('in_doc_number').value;
+  if(!dn){{alert('Ingrese el numero de documento');return;}}
+  var f=document.createElement('form');
+  f.method='post';f.action='/registro/buscar';
+  var i1=document.createElement('input');i1.type='hidden';i1.name='doc_type';i1.value=dt;
+  var i2=document.createElement('input');i2.type='hidden';i2.name='doc_number';i2.value=dn;
+  f.appendChild(i1);f.appendChild(i2);document.body.appendChild(f);f.submit();
+}}
+
+function toggleProcOtro(){{
+  var v=document.getElementById('sel_origin').value;
+  document.getElementById('proc_otro_div').style.display=(v==='Otro')?'flex':'none';
+}}
+
+document.getElementById('pregnant_check').addEventListener('change', function(){{
+  document.getElementById('gest-fields').style.display=this.checked?'flex':'none';
 }});
+
+document.getElementById('birth_date_input').addEventListener('change', function(){{
+  var bd=new Date(this.value);
+  if(isNaN(bd.getTime())) return;
+  var age=Math.floor((new Date()-bd)/(365.25*24*3600*1000));
+  document.getElementById('age_years_input').value=age;
+}});
+
+function toggleHoy(){{
+  var chk=document.getElementById('hoy_check');
+  var inp=document.getElementById('sample_date_input');
+  if(chk.checked){{
+    var n=new Date();
+    inp.value=n.getFullYear()+'-'+String(n.getMonth()+1).padStart(2,'0')+'-'+String(n.getDate()).padStart(2,'0');
+  }}
+  inp.disabled=chk.checked;
+}}
+toggleHoy();
 </script>
 """
         self._respond_html(_base_layout(content, "registro", user))
@@ -999,46 +1136,92 @@ document.getElementById('birth_date_input').addEventListener('change', function(
     # ===========================================================
     # MÓDULO ANOTAR RESULTADOS
     # ===========================================================
+    def _resultados_order_options(self, pending, selected_id=None):
+        """Build <option> list for the pending orders dropdown."""
+        opts = '<option value="">— Seleccione una orden pendiente —</option>'
+        for row in pending:
+            oid, first_name, last_name, date, sample_date, doc_type, doc_number = row
+            p_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
+            p_doc  = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
+            d_disp = (date or "")[:10]
+            label  = f"#{oid} — {p_name} ({p_doc}) [{d_disp}]"
+            sel    = " selected" if oid == selected_id else ""
+            opts  += f'<option value="{oid}"{sel}>{html.escape(label)}</option>'
+        return opts
+
+    def _resultados_topbar_js(self):
+        return """
+<script>
+function filterOrders() {
+  var q = document.getElementById('order-search').value.toLowerCase();
+  var sel = document.getElementById('order-select');
+  sel.querySelectorAll('option').forEach(function(opt) {
+    if (!opt.value) { opt.style.display = ''; return; }
+    opt.style.display = opt.text.toLowerCase().includes(q) ? '' : 'none';
+  });
+}
+function updateCargarBtn() {
+  var v = document.getElementById('order-select').value;
+  document.getElementById('btn-eliminar').style.display = v ? 'inline-flex' : 'none';
+}
+function cargarOrden() {
+  var v = document.getElementById('order-select').value;
+  if (v) window.location.href = '/resultados/' + v;
+}
+function eliminarOrden() {
+  var v = document.getElementById('order-select').value;
+  if (!v) return;
+  if (!confirm('Eliminar la orden #' + v + '? Esta accion no se puede deshacer.')) return;
+  fetch('/resultados/' + v + '/eliminar', {method:'POST'})
+    .then(function(r){ window.location.href = r.ok ? '/resultados' : '/resultados?err=1'; });
+}
+</script>"""
+
     def _handle_resultados_list(self, message="", message_kind="success"):
         user = self._require_login()
         if not user:
             return
+        params = _get_query_params(self.path)
+        msg_param = params.get("msg", "") or params.get("err", "")
+        if msg_param and not message:
+            message = html.escape(msg_param)
+            message_kind = "error" if params.get("err") else "success"
+        order_id_str = params.get("order_id", "")
+        if order_id_str and order_id_str.isdigit():
+            return self._handle_resultados_form_get(int(order_id_str), message, message_kind)
+
         db = new_db()
         pending = db.get_pending_orders()
-
-        rows_html = ""
-        for row in pending:
-            order_id, first_name, last_name, date, sample_date, doc_type, doc_number = row
-            patient_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
-            doc = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
-            date_disp = date[:10] if date else "-"
-            sample_disp = sample_date[:10] if sample_date else "-"
-            rows_html += f"""
-<tr>
-  <td>{order_id}</td>
-  <td>{html.escape(patient_name)}</td>
-  <td>{html.escape(doc)}</td>
-  <td>{html.escape(date_disp)}</td>
-  <td>{html.escape(sample_disp)}</td>
-  <td><a href="/resultados/{order_id}" class="btn btn-sm btn-primary">Ingresar</a></td>
-</tr>"""
-
+        options_html = self._resultados_order_options(pending)
+        pending_count = len(pending)
         alert_html = _alert(message, message_kind) if message else ""
-        content = f"""
-{alert_html}
-<h2 class="page-title">Anotar Resultados</h2>
-<p>Órdenes pendientes de resultado: <strong>{len(pending)}</strong></p>
-<div class="table-wrapper">
-  <table class="data-table">
-    <thead>
-      <tr><th>#</th><th>Paciente</th><th>Documento</th>
-          <th>Fecha orden</th><th>F. muestra</th><th>Acción</th></tr>
-    </thead>
-    <tbody>
-      {''.join(rows_html) if rows_html else '<tr><td colspan="6" class="text-center muted">No hay órdenes pendientes</td></tr>'}
-    </tbody>
-  </table>
-</div>"""
+
+        content = f"""{alert_html}
+<div class="module-layout">
+  <div class="module-header">
+    <div class="top-action-bar">
+      <input type="text" id="order-search" class="form-input-compact"
+             placeholder="Buscar nombre, doc, #..." style="width:210px" oninput="filterOrders()">
+      <select id="order-select" class="order-select" onchange="updateCargarBtn()">
+        {options_html}
+      </select>
+      <button class="btn btn-primary" onclick="cargarOrden()">Cargar</button>
+      <span class="muted" style="font-size:0.85rem; white-space:nowrap">
+        Pendientes: <strong>{pending_count}</strong>
+      </span>
+      <button id="btn-eliminar" class="btn btn-danger btn-sm" onclick="eliminarOrden()"
+              style="display:none">Eliminar orden</button>
+    </div>
+  </div>
+  <div class="module-body" style="display:flex; align-items:center; justify-content:center;">
+    <div style="text-align:center; color:var(--muted);">
+      <div style="font-size:3rem; margin-bottom:12px">📋</div>
+      <p style="font-size:1.05rem">Seleccione una orden del listado para ingresar resultados</p>
+      {'<p style="color:var(--success); font-weight:600">No hay ordenes pendientes</p>' if pending_count == 0 else ''}
+    </div>
+  </div>
+</div>
+{self._resultados_topbar_js()}"""
         self._respond_html(_base_layout(content, "resultados", user))
 
     def _handle_resultados_form_get(self, order_id: int, message="", message_kind="success"):
@@ -1058,25 +1241,75 @@ document.getElementById('birth_date_input').addEventListener('change', function(
         doc = f"{pat.get('doc_type','')} {pat.get('doc_number','')}".strip()
         date_disp = (ord_inf.get("date") or "")[:10]
 
+        results = order_details.get("results", [])
+        pending_fields = sum(1 for r in results if not r[1])
+
+        pending = db.get_pending_orders()
+        options_html = self._resultados_order_options(pending, selected_id=order_id)
+        pending_count = len(pending)
+
         form_html = _build_result_form_html(order_id, order_details)
         alert_html = _alert(message, message_kind) if message else ""
 
-        content = f"""
-{alert_html}
-<h2 class="page-title">Ingresar Resultados — Orden #{order_id}</h2>
-<div class="order-info-bar">
-  <span><strong>Paciente:</strong> {html.escape(patient_name)}</span>
-  <span><strong>Documento:</strong> {html.escape(doc)}</span>
-  <span><strong>Fecha:</strong> {html.escape(date_disp)}</span>
-</div>
-<form method="post" action="/resultados/{order_id}" class="card-form">
-  {form_html}
-  <div style="margin-top:20px; display:flex; gap:12px">
-    <button type="submit" class="btn btn-primary">💾 Guardar resultados</button>
-    <a href="/resultados" class="btn btn-secondary">← Volver</a>
+        pending_badge = (
+            f'<span class="badge badge-warning">{pending_fields} sin resultado</span>'
+            if pending_fields else
+            '<span class="badge badge-success">Todos con resultado</span>'
+        )
+
+        content = f"""{alert_html}
+<div class="module-layout">
+  <div class="module-header">
+    <div class="top-action-bar">
+      <input type="text" id="order-search" class="form-input-compact"
+             placeholder="Buscar nombre, doc, #..." style="width:210px" oninput="filterOrders()">
+      <select id="order-select" class="order-select" onchange="updateCargarBtn()">
+        {options_html}
+      </select>
+      <button class="btn btn-primary" onclick="cargarOrden()">Cargar</button>
+      <span class="muted" style="font-size:0.85rem; white-space:nowrap">
+        Pendientes: <strong>{pending_count}</strong>
+      </span>
+      <button id="btn-eliminar" class="btn btn-danger btn-sm" onclick="eliminarOrden()"
+              style="display:inline-flex">Eliminar orden</button>
+    </div>
+    <div class="order-info-bar">
+      <span><strong>Orden #{order_id}</strong></span>
+      <span><strong>Paciente:</strong> {html.escape(patient_name)}</span>
+      <span><strong>Doc:</strong> {html.escape(doc)}</span>
+      <span><strong>Fecha:</strong> {html.escape(date_disp)}</span>
+      {pending_badge}
+    </div>
   </div>
-</form>"""
+  <form method="post" action="/resultados/{order_id}"
+        style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
+    <div class="module-body" style="padding-right:4px;">
+      {form_html}
+    </div>
+    <div class="module-footer" style="display:flex; gap:10px; align-items:center;">
+      <button type="submit" class="btn btn-primary">Guardar Resultados</button>
+      <a href="/resultados" class="btn btn-secondary">Cancelar</a>
+    </div>
+  </form>
+</div>
+{self._resultados_topbar_js()}"""
         self._respond_html(_base_layout(content, "resultados", user))
+
+    def _handle_resultados_eliminar(self, order_id: int):
+        user = self._require_login()
+        if not user:
+            return
+        db = new_db()
+        try:
+            db.cur.execute(
+                "UPDATE orders SET deleted=1, deleted_reason='eliminado desde web' WHERE id=?",
+                (order_id,)
+            )
+            db.conn.commit()
+            self.send_response(200)
+            self.end_headers()
+        except Exception as e:
+            self.send_error(500, str(e))
 
     def _handle_resultados_save(self, order_id: int):
         user = self._require_login()
@@ -1120,54 +1353,133 @@ document.getElementById('birth_date_input').addEventListener('change', function(
         params = _get_query_params(self.path)
         include_emitted = params.get("include_emitted") == "1"
         message = params.get("msg", "")
+        selected_order_id_str = params.get("order_id", "")
+        selected_order_id = int(selected_order_id_str) if selected_order_id_str.isdigit() else None
 
         db = new_db()
         orders = db.get_completed_orders(include_emitted=include_emitted)
 
-        rows_html = ""
+        # Build dropdown options
+        opts = '<option value="">— Seleccione una orden completada —</option>'
         for row in orders:
-            (order_id, first_name, last_name, date, sample_date,
+            (oid, first_name, last_name, date, sample_date,
              doc_type, doc_number, emitted, emitted_at) = row
-            patient_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
-            doc = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
-            date_disp = (date or "")[:10]
-            emitted_disp = "Si" if emitted else "—"
-            rows_html += f"""
-<tr>
-  <td>{order_id}</td>
-  <td>{html.escape(patient_name)}</td>
-  <td>{html.escape(doc)}</td>
-  <td>{html.escape(date_disp)}</td>
-  <td>{emitted_disp}</td>
-  <td>
-    <a href="/emitir/{order_id}/pdf" class="btn btn-sm btn-primary" target="_blank">📄 PDF</a>
-    <form method="post" action="/emitir/{order_id}/marcar" style="display:inline">
-      <button type="submit" class="btn btn-sm btn-secondary">Marcar emitido</button>
-    </form>
-  </td>
-</tr>"""
+            p_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
+            p_doc  = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
+            d_disp = (date or "")[:10]
+            em_tag = " [EMITIDO]" if emitted else ""
+            label  = f"#{oid} — {p_name} ({p_doc}) [{d_disp}]{em_tag}"
+            sel    = " selected" if oid == selected_order_id else ""
+            opts  += f'<option value="{oid}"{sel}>{html.escape(label)}</option>'
 
+        orders_count = len(orders)
         toggle_label = "Ocultar emitidos" if include_emitted else "Mostrar emitidos"
-        toggle_url = "/emitir" if include_emitted else "/emitir?include_emitted=1"
-        alert_html = _alert(html.escape(message)) if message else ""
+        toggle_url   = "/emitir" if include_emitted else "/emitir?include_emitted=1"
+        alert_html   = _alert(html.escape(message)) if message else ""
 
-        content = f"""
-{alert_html}
-<h2 class="page-title">Emitir Resultados</h2>
-<div style="margin-bottom:12px">
-  <a href="{toggle_url}" class="btn btn-secondary">{toggle_label}</a>
-</div>
-<div class="table-wrapper">
+        # Preview panel: show selected order details
+        preview_html = ""
+        selected_order_info = ""
+        if selected_order_id:
+            order_details = db.get_order_details(selected_order_id)
+            if order_details:
+                pat = order_details["patient"]
+                ord_inf = order_details["order"]
+                p_name = f"{pat.get('first_name','')} {pat.get('last_name','')}".strip()
+                p_doc  = f"{pat.get('doc_type','')} {pat.get('doc_number','')}".strip()
+                d_disp = (ord_inf.get("date") or "")[:10]
+                emitted_disp = ord_inf.get("emitted_at") or ("Emitido" if ord_inf.get("emitted") else "No emitido")
+                selected_order_info = f"""
+<div class="order-info-bar">
+  <span><strong>Orden #{selected_order_id}</strong></span>
+  <span><strong>Paciente:</strong> {html.escape(p_name)}</span>
+  <span><strong>Doc:</strong> {html.escape(p_doc)}</span>
+  <span><strong>Fecha:</strong> {html.escape(d_disp)}</span>
+  <span class="muted">{html.escape(str(emitted_disp))}</span>
+</div>"""
+                results = order_details.get("results", [])
+                if results:
+                    trows = ""
+                    for r in results:
+                        t_name = r[0]; raw = r[1] or "—"
+                        disp_val = raw
+                        try:
+                            import json as _json
+                            d = _json.loads(raw)
+                            if isinstance(d, dict) and d.get("type") == "structured":
+                                vals = d.get("values", {})
+                                disp_val = "; ".join(
+                                    f"{k}: {v}" for k, v in vals.items() if v not in ("", None)
+                                ) or "—"
+                            elif isinstance(d, dict):
+                                disp_val = d.get("value", raw)
+                        except Exception:
+                            pass
+                        trows += f"<tr><td>{html.escape(t_name)}</td><td>{html.escape(str(disp_val))}</td></tr>"
+                    preview_html = f"""
+<div class="table-wrapper" style="max-height:100%; overflow-y:auto;">
   <table class="data-table">
-    <thead>
-      <tr><th>#</th><th>Paciente</th><th>Documento</th>
-          <th>Fecha</th><th>Emitido</th><th>Acciones</th></tr>
-    </thead>
-    <tbody>
-      {''.join(rows_html) if rows_html else '<tr><td colspan="6" class="text-center muted">No hay órdenes completadas</td></tr>'}
-    </tbody>
+    <thead><tr><th>Examen</th><th>Resultado</th></tr></thead>
+    <tbody>{trows}</tbody>
   </table>
 </div>"""
+                else:
+                    preview_html = '<p class="muted text-center">Sin resultados registrados.</p>'
+
+        if not preview_html:
+            preview_html = """
+<div style="text-align:center; color:var(--muted); padding:40px 0;">
+  <div style="font-size:3rem; margin-bottom:12px">📄</div>
+  <p style="font-size:1.05rem">Seleccione una orden para ver los resultados y emitir el PDF</p>
+</div>"""
+
+        emit_btn_html = ""
+        if selected_order_id:
+            emit_btn_html = f"""
+  <a href="/emitir/{selected_order_id}/pdf" class="btn btn-primary" target="_blank">Emitir PDF</a>
+  <form method="post" action="/emitir/{selected_order_id}/marcar" style="display:inline; margin-left:8px;">
+    <button type="submit" class="btn btn-secondary">Marcar emitido</button>
+  </form>"""
+
+        content = f"""{alert_html}
+<div class="module-layout">
+  <div class="module-header">
+    <div class="top-action-bar">
+      <input type="text" id="emitir-search" class="form-input-compact"
+             placeholder="Buscar nombre, doc, #..." style="width:210px" oninput="filterEmitir()">
+      <select id="emitir-select" class="order-select" onchange="updateEmitirBtn()">
+        {opts}
+      </select>
+      <button class="btn btn-primary" onclick="cargarEmitir()">Ver</button>
+      <a href="{toggle_url}" class="btn btn-secondary btn-sm">{toggle_label}</a>
+      <span class="muted" style="font-size:0.85rem; white-space:nowrap">
+        Completadas: <strong>{orders_count}</strong>
+      </span>
+      <a href="/emitir/exportar_csv" class="btn btn-secondary btn-sm" title="Exportar a CSV">Exportar CSV</a>
+    </div>
+    {selected_order_info}
+  </div>
+  <div class="module-body">
+    {preview_html}
+  </div>
+  <div class="module-footer" style="display:flex; gap:10px; align-items:center;">
+    {emit_btn_html}
+  </div>
+</div>
+<script>
+function filterEmitir() {{
+  var q = document.getElementById('emitir-search').value.toLowerCase();
+  document.getElementById('emitir-select').querySelectorAll('option').forEach(function(opt) {{
+    if (!opt.value) {{ opt.style.display = ''; return; }}
+    opt.style.display = opt.text.toLowerCase().includes(q) ? '' : 'none';
+  }});
+}}
+function updateEmitirBtn() {{}}
+function cargarEmitir() {{
+  var v = document.getElementById('emitir-select').value;
+  if (v) window.location.href = '/emitir?order_id=' + v;
+}}
+</script>"""
         self._respond_html(_base_layout(content, "emitir", user))
 
     def _handle_emitir_pdf(self, order_id: int):
@@ -1205,105 +1517,448 @@ document.getElementById('birth_date_input').addEventListener('change', function(
         db.mark_order_emitted(order_id, now_str)
         self._redirect(f"/emitir?msg=Orden+{order_id}+marcada+como+emitida")
 
-    # ===========================================================
-    # MÓDULO ANÁLISIS
-    # ===========================================================
-    def _handle_analisis(self):
+    def _handle_emitir_exportar_csv(self):
+        import csv, io
         user = self._require_login()
         if not user:
             return
         params = _get_query_params(self.path)
         desde = params.get("desde", "")
         hasta = params.get("hasta", "")
-
-        stats = None
-        error_msg = ""
-        start_dt = None
-        end_dt = None
-
-        if desde or hasta:
+        today = datetime.date.today().isoformat()
+        start_dt = (desde + " 00:00:00") if desde else (today + " 00:00:00")
+        end_dt   = (hasta + " 23:59:59") if hasta else (today + " 23:59:59")
+        db = new_db()
+        rows = db.get_results_in_range(start_dt, end_dt)
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["Orden#", "Fecha", "F.Muestra", "Apellidos", "Nombres",
+                         "Doc", "Sexo", "Edad(años)", "Examen", "Categoria", "Resultado"])
+        for r in rows:
+            (ot_id, o_id, o_date, o_sample, p_first, p_last, p_doc_type, p_doc_num,
+             p_sex, p_birth, p_hcl, p_origin, p_preg, p_gest_wk, p_edd,
+             o_age, o_obs, o_ins, o_fua,
+             t_name, t_cat, ot_result, ot_ss, ot_si, ot_obs) = r
+            disp_result = ot_result or ""
             try:
-                if desde:
-                    start_dt = desde + " 00:00:00"
-                if hasta:
-                    end_dt = hasta + " 23:59:59"
+                import json as _json
+                d = _json.loads(ot_result)
+                if isinstance(d, dict) and d.get("type") == "structured":
+                    disp_result = "; ".join(
+                        f"{k}: {v}" for k, v in d.get("values", {}).items() if v not in ("", None)
+                    )
+                elif isinstance(d, dict):
+                    disp_result = str(d.get("value", ot_result) or "")
+            except Exception:
+                pass
+            writer.writerow([
+                o_id, (o_date or "")[:10], (o_sample or "")[:10],
+                p_last or "", p_first or "",
+                f"{p_doc_type or ''} {p_doc_num or ''}".strip(),
+                p_sex or "", o_age or "",
+                t_name or "", t_cat or "", disp_result
+            ])
+        csv_bytes = buf.getvalue().encode("utf-8-sig")
+        filename = f"resultados_{today}.csv"
+        self.send_response(200)
+        self.send_header("Content-Type", "text/csv; charset=utf-8-sig")
+        self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        self.send_header("Content-Length", str(len(csv_bytes)))
+        self.end_headers()
+        self.wfile.write(csv_bytes)
+
+    # ===========================================================
+    # MÓDULO ANÁLISIS — 3 tabs
+    # ===========================================================
+    def _handle_analisis(self):
+        user = self._require_login()
+        if not user:
+            return
+        params  = _get_query_params(self.path)
+        tab     = params.get("tab", "estadisticas")
+        today   = datetime.date.today().isoformat()
+        first_m = datetime.date.today().replace(day=1).isoformat()
+
+        db = new_db()
+
+        # ── Tab links ──────────────────────────────────────────
+        def tab_link(name, label):
+            cls = "tab-link active" if tab == name else "tab-link"
+            return f'<a href="/analisis?tab={name}" class="{cls}">{label}</a>'
+
+        tabs_bar = f"""
+<div class="tabs">
+  {tab_link("estadisticas", "Estadisticas")}
+  {tab_link("pruebas", "Registro de pruebas")}
+  {tab_link("historial", "Historial de pacientes")}
+</div>"""
+
+        # ── TAB 1: Estadísticas ────────────────────────────────
+        if tab == "estadisticas":
+            modo  = params.get("modo", "mes")
+            mes   = params.get("mes",  str(datetime.date.today().month))
+            anio  = params.get("anio", str(datetime.date.today().year))
+            desde = params.get("desde", "")
+            hasta = params.get("hasta", "")
+
+            start_dt = end_dt = None
+            if modo == "rango" and (desde or hasta):
+                start_dt = (desde + " 00:00:00") if desde else None
+                end_dt   = (hasta + " 23:59:59") if hasta else None
+            elif modo == "mes":
+                try:
+                    import calendar
+                    y, m = int(anio), int(mes)
+                    last_day = calendar.monthrange(y, m)[1]
+                    start_dt = f"{y:04d}-{m:02d}-01 00:00:00"
+                    end_dt   = f"{y:04d}-{m:02d}-{last_day:02d} 23:59:59"
+                except Exception:
+                    pass
+
+            error_msg = ""
+            stats = None
+            try:
+                stats = db.get_statistics(start_datetime=start_dt, end_datetime=end_dt)
             except Exception as e:
                 error_msg = str(e)
 
-        db = new_db()
-        try:
-            stats = db.get_statistics(
-                start_datetime=start_dt if desde else None,
-                end_datetime=end_dt if hasta else None
-            )
-        except Exception as e:
-            error_msg = str(e)
-
-        summary_html = ""
-        table_html = ""
-        if stats:
-            summary_html = f"""
-<div class="dashboard-grid" style="margin-bottom:20px">
-  <div class="metric-card"><h2>Pacientes</h2><p>{stats.get('total_patients',0)}</p></div>
-  <div class="metric-card"><h2>Órdenes</h2><p>{stats.get('total_orders',0)}</p></div>
-  <div class="metric-card"><h2>Pruebas realizadas</h2><p>{stats.get('total_tests_conducted',0)}</p></div>
+            # Summary cards
+            summary_html = ""
+            if stats:
+                periodo_label = ""
+                if modo == "mes":
+                    MESES = ["","Enero","Febrero","Marzo","Abril","Mayo","Junio",
+                             "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+                    try: periodo_label = f"{MESES[int(mes)]} {anio}"
+                    except Exception: periodo_label = f"{mes}/{anio}"
+                elif desde or hasta:
+                    periodo_label = f"{desde} — {hasta}"
+                else:
+                    periodo_label = "Todo el tiempo"
+                summary_html = f"""
+<div style="display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; align-items:center;">
+  <div class="metric-card" style="min-width:120px; padding:10px 16px;">
+    <div class="metric-label">Periodo</div>
+    <div class="metric-value" style="font-size:1rem">{html.escape(periodo_label)}</div>
+  </div>
+  <div class="metric-card" style="min-width:100px; padding:10px 16px;">
+    <div class="metric-label">Pacientes</div>
+    <div class="metric-value">{stats.get('total_patients',0)}</div>
+  </div>
+  <div class="metric-card" style="min-width:100px; padding:10px 16px;">
+    <div class="metric-label">Ordenes</div>
+    <div class="metric-value">{stats.get('total_orders',0)}</div>
+  </div>
+  <div class="metric-card" style="min-width:100px; padding:10px 16px;">
+    <div class="metric-label">Pruebas</div>
+    <div class="metric-value">{stats.get('total_tests_conducted',0)}</div>
+  </div>
 </div>"""
 
-            by_cat_list = stats.get("by_category", [])
-            by_cat = {cat: count for cat, count in by_cat_list}
-            rows = []
-            for cat in CATEGORY_DISPLAY_ORDER:
-                if cat in by_cat:
-                    rows.append((cat, by_cat[cat]))
-            for cat, count in by_cat.items():
-                if cat not in CATEGORY_DISPLAY_ORDER:
-                    rows.append((cat, count))
-
-            if rows:
-                rows_html = "".join(
-                    f"<tr><td>{html.escape(cat)}</td><td class='text-center'>{count}</td></tr>"
-                    for cat, count in rows
-                )
-                table_html = f"""
-<div class="table-wrapper">
+            # Detailed table with area rows + per-test sub-rows
+            detail_table_html = ""
+            if stats:
+                detail = stats.get("by_category_detail", {})
+                ordered_cats = [c for c in CATEGORY_DISPLAY_ORDER if c in detail]
+                ordered_cats += [c for c in detail if c not in CATEGORY_DISPLAY_ORDER]
+                rows_html = ""
+                for cat in ordered_cats:
+                    info = detail[cat]
+                    rows_html += f"""
+<tr class="stats-area-row">
+  <td>{html.escape(cat)}</td>
+  <td class="text-center">{info['total']}</td>
+</tr>"""
+                    for t_name, t_count in info.get("tests", []):
+                        rows_html += f"""
+<tr class="stats-test-row">
+  <td style="padding-left:28px; color:var(--muted);">{html.escape(t_name)}</td>
+  <td class="text-center">{t_count}</td>
+</tr>"""
+                detail_table_html = f"""
+<div class="table-wrapper" style="max-height:100%; overflow-y:auto;">
   <table class="data-table">
-    <thead><tr><th>Categoría</th><th>Cantidad</th></tr></thead>
-    <tbody>{rows_html}</tbody>
+    <thead><tr><th>Area / Examen</th><th style="width:100px; text-align:center;">Cantidad</th></tr></thead>
+    <tbody>{rows_html or '<tr><td colspan="2" class="text-center muted">Sin datos</td></tr>'}</tbody>
   </table>
 </div>"""
 
-        alert_html = _alert(error_msg, "error") if error_msg else ""
-        today = datetime.date.today().isoformat()
-        first_of_month = datetime.date.today().replace(day=1).isoformat()
+            # Filter form
+            mes_options = "".join(
+                f'<option value="{i}" {"selected" if str(i)==mes else ""}>'
+                f'{"Ene Feb Mar Abr May Jun Jul Ago Sep Oct Nov Dic".split()[i-1]}</option>'
+                for i in range(1, 13)
+            )
+            filter_form = f"""
+<form method="get" action="/analisis" style="display:flex; flex-wrap:wrap; gap:8px; align-items:flex-end; margin-bottom:10px;">
+  <input type="hidden" name="tab" value="estadisticas">
+  <div>
+    <label class="field-label">Modo</label>
+    <select name="modo" class="form-select-compact" onchange="this.form.submit()">
+      <option value="mes" {"selected" if modo=="mes" else ""}>Por mes</option>
+      <option value="rango" {"selected" if modo=="rango" else ""}>Por rango</option>
+      <option value="todo" {"selected" if modo=="todo" else ""}>Todo</option>
+    </select>
+  </div>
+  {"" if modo != "mes" else f'''
+  <div><label class="field-label">Mes</label>
+    <select name="mes" class="form-select-compact">{mes_options}</select></div>
+  <div><label class="field-label">Año</label>
+    <input type="number" name="anio" class="form-input-compact" value="{html.escape(anio)}" style="width:72px"></div>'''}
+  {"" if modo != "rango" else f'''
+  <div><label class="field-label">Desde</label>
+    <input type="date" name="desde" class="form-input-compact" value="{html.escape(desde)}"></div>
+  <div><label class="field-label">Hasta</label>
+    <input type="date" name="hasta" class="form-input-compact" value="{html.escape(hasta)}"></div>'''}
+  <button type="submit" class="btn btn-primary btn-sm">Consultar</button>
+</form>"""
+
+            alert_html = _alert(error_msg, "error") if error_msg else ""
+            tab_content = f"""{alert_html}{filter_form}{summary_html}{detail_table_html}"""
+
+        # ── TAB 2: Registro de pruebas ─────────────────────────
+        elif tab == "pruebas":
+            desde = params.get("desde", first_m)
+            hasta = params.get("hasta", today)
+            rows_data = []
+            error_msg = ""
+            if desde or hasta:
+                try:
+                    start_dt = (desde + " 00:00:00") if desde else None
+                    end_dt   = (hasta + " 23:59:59") if hasta else None
+                    rows_data = db.get_results_in_range(start_dt, end_dt)
+                except Exception as e:
+                    error_msg = str(e)
+
+            trows = ""
+            for r in rows_data:
+                # columns: ot.id, o.id, o.date, o.sample_date, p.first_name, p.last_name,
+                #          p.doc_type, p.doc_number, p.sex, [6 patient cols], [4 order cols],
+                #          t.name(19), t.category(20), ot.result(21), ss, si, obs
+                o_date     = r[2]
+                p_first    = r[4]
+                p_last     = r[5]
+                p_doc_type = r[6]
+                p_doc_num  = r[7]
+                t_name     = r[19]
+                ot_result  = r[21]
+                disp = ot_result or "—"
+                try:
+                    import json as _json
+                    d = _json.loads(ot_result)
+                    if isinstance(d, dict) and d.get("type") == "structured":
+                        disp = "; ".join(
+                            f"{k}: {v}" for k, v in d.get("values", {}).items()
+                            if v not in ("", None)
+                        ) or "—"
+                    elif isinstance(d, dict):
+                        disp = str(d.get("value", ot_result) or "—")
+                except Exception:
+                    pass
+                p_name = f"{p_last or ''} {p_first or ''}".strip() or "—"
+                p_doc  = f"{p_doc_type or ''} {p_doc_num or ''}".strip()
+                trows += f"""<tr>
+  <td>{(o_date or "")[:10]}</td>
+  <td>{html.escape(p_name)}</td>
+  <td>{html.escape(p_doc)}</td>
+  <td>{html.escape(t_name or "")}</td>
+  <td style="max-width:280px; word-break:break-word;">{html.escape(str(disp))}</td>
+</tr>"""
+
+            table_html = f"""
+<div class="table-wrapper" style="max-height:100%; overflow-y:auto;">
+  <table class="data-table">
+    <thead><tr><th>Fecha</th><th>Paciente</th><th>Documento</th><th>Examen</th><th>Resultado</th></tr></thead>
+    <tbody>{trows or '<tr><td colspan="5" class="text-center muted">Sin datos en el rango seleccionado</td></tr>'}</tbody>
+  </table>
+</div>"""
+            alert_html = _alert(error_msg, "error") if error_msg else ""
+            tab_content = f"""{alert_html}
+<form method="get" action="/analisis" style="display:flex; gap:8px; align-items:flex-end; margin-bottom:10px; flex-wrap:wrap;">
+  <input type="hidden" name="tab" value="pruebas">
+  <div><label class="field-label">Desde</label>
+    <input type="date" name="desde" class="form-input-compact" value="{html.escape(desde)}"></div>
+  <div><label class="field-label">Hasta</label>
+    <input type="date" name="hasta" class="form-input-compact" value="{html.escape(hasta)}"></div>
+  <button type="submit" class="btn btn-primary btn-sm">Consultar</button>
+  <a href="/emitir/exportar_csv?desde={html.escape(desde)}&hasta={html.escape(hasta)}"
+     class="btn btn-secondary btn-sm">Exportar CSV</a>
+</form>
+{table_html}"""
+
+        # ── TAB 3: Historial de pacientes ──────────────────────
+        else:
+            tab = "historial"
+            doc_q      = params.get("doc", "").strip()
+            apellido_q = params.get("apellido", "").strip()
+            sel_order  = params.get("order_id", "")
+
+            history_rows = []
+            error_msg    = ""
+            if doc_q or apellido_q:
+                try:
+                    history_rows = db.get_patient_history(
+                        doc_number=doc_q or None,
+                        last_name=apellido_q or None
+                    )
+                except Exception as e:
+                    error_msg = str(e)
+
+            # Group by order_id
+            orders_map = {}   # {order_id: {info, tests}}
+            patient_info = {}
+            for r in history_rows:
+                (o_id, o_date, o_sample, t_id, t_name, ot_result, t_cat,
+                 p_first, p_last, p_doc_type, p_doc_num,
+                 p_sex, p_birth, p_hcl, p_origin, p_height, p_weight, p_bp,
+                 p_preg, p_gest_wk, p_edd,
+                 o_age, o_obs, o_req, o_ins, o_fua, o_emitted, o_emitted_at,
+                 ot_ss, ot_si, ot_obs_val, ot_pending, ot_id_val,
+                 ot_del, ot_del_reason) = r
+                if o_id not in orders_map:
+                    orders_map[o_id] = {
+                        "date": (o_date or "")[:10],
+                        "sample": (o_sample or "")[:10],
+                        "emitted": o_emitted,
+                        "tests": []
+                    }
+                if not ot_del:
+                    orders_map[o_id]["tests"].append((t_name, t_cat, ot_result))
+                if not patient_info:
+                    patient_info = {
+                        "name": f"{p_first or ''} {p_last or ''}".strip(),
+                        "doc": f"{p_doc_type or ''} {p_doc_num or ''}".strip(),
+                        "sex": p_sex or "—", "birth": (p_birth or "")[:10],
+                        "hcl": p_hcl or "—", "origin": p_origin or "—",
+                        "height": p_height, "weight": p_weight, "bp": p_bp or "—",
+                        "preg": p_preg, "ins": o_ins or "—",
+                    }
+
+            # Left column: order list
+            order_list_html = ""
+            if orders_map:
+                for oid, oinfo in orders_map.items():
+                    em_tag = " ✓" if oinfo["emitted"] else ""
+                    active = "style='font-weight:700; color:var(--primary);'" if str(oid) == sel_order else ""
+                    href = f"/analisis?tab=historial&doc={html.escape(doc_q)}&apellido={html.escape(apellido_q)}&order_id={oid}"
+                    order_list_html += f"""
+<div style="padding:6px 8px; border-bottom:1px solid var(--border);">
+  <a href="{href}" {active} style="text-decoration:none; display:block;">
+    <span style="font-size:0.8rem; color:var(--muted);">{oinfo['date']}</span>
+    <span style="font-weight:600;">Orden #{oid}{em_tag}</span>
+    <span style="font-size:0.78rem; color:var(--muted); display:block;">{len(oinfo['tests'])} prueba(s)</span>
+  </a>
+</div>"""
+            else:
+                order_list_html = '<p class="muted text-center" style="padding:16px;">Sin ordenes</p>'
+
+            # Center column: patient clinical summary
+            pat_html = ""
+            if patient_info:
+                def row2(label, val):
+                    return f'<tr><td class="muted" style="font-size:0.8rem; white-space:nowrap;">{label}</td><td style="font-size:0.85rem;">{html.escape(str(val))}</td></tr>'
+                pat_html = f"""
+<table style="width:100%; border-collapse:collapse;">
+  {row2("Paciente", patient_info['name'])}
+  {row2("Documento", patient_info['doc'])}
+  {row2("Sexo", patient_info['sex'])}
+  {row2("F. Nac.", patient_info['birth'])}
+  {row2("HCL", patient_info['hcl'])}
+  {row2("Origen", patient_info['origin'])}
+  {row2("Talla", f"{patient_info['height']} cm" if patient_info['height'] else '—')}
+  {row2("Peso", f"{patient_info['weight']} kg" if patient_info['weight'] else '—')}
+  {row2("Presion", patient_info['bp'])}
+  {row2("Seguro", patient_info['ins'])}
+</table>"""
+            else:
+                pat_html = '<p class="muted text-center" style="padding:16px;">Busque un paciente</p>'
+
+            # Right column: selected order results
+            results_html = ""
+            if sel_order and sel_order in {str(k) for k in orders_map}:
+                oid_sel = int(sel_order)
+                tests = orders_map[oid_sel]["tests"]
+                trows = ""
+                for t_name, t_cat, ot_result in tests:
+                    disp = ot_result or "—"
+                    try:
+                        import json as _json
+                        d = _json.loads(ot_result)
+                        if isinstance(d, dict) and d.get("type") == "structured":
+                            disp = "; ".join(
+                                f"{k}: {v}" for k, v in d.get("values", {}).items()
+                                if v not in ("", None)
+                            ) or "—"
+                        elif isinstance(d, dict):
+                            disp = str(d.get("value", ot_result) or "—")
+                    except Exception:
+                        pass
+                    trows += f"""<tr>
+  <td style="font-size:0.83rem;">{html.escape(t_name or '')}</td>
+  <td style="font-size:0.83rem; max-width:200px; word-break:break-word;">{html.escape(str(disp))}</td>
+</tr>"""
+                results_html = f"""
+<div style="font-size:0.8rem; color:var(--muted); margin-bottom:6px;">
+  Orden #{oid_sel} — {orders_map[oid_sel]['date']}
+  {'— <a href="/emitir/' + str(oid_sel) + '/pdf" target="_blank" style="color:var(--primary);">PDF</a>' if orders_map[oid_sel]['emitted'] else ''}
+</div>
+<table style="width:100%; border-collapse:collapse; font-size:0.85rem;">
+  <thead><tr style="background:var(--bg-alt);">
+    <th style="text-align:left; padding:4px 6px;">Examen</th>
+    <th style="text-align:left; padding:4px 6px;">Resultado</th>
+  </tr></thead>
+  <tbody>{trows or '<tr><td colspan="2" class="muted text-center">Sin resultados</td></tr>'}</tbody>
+</table>"""
+            elif orders_map:
+                results_html = '<p class="muted text-center" style="padding:16px;">Seleccione una orden de la lista</p>'
+            else:
+                results_html = '<p class="muted text-center" style="padding:16px;">—</p>'
+
+            alert_html = _alert(error_msg, "error") if error_msg else ""
+            tab_content = f"""{alert_html}
+<form method="get" action="/analisis" style="display:flex; gap:8px; align-items:flex-end; margin-bottom:10px; flex-wrap:wrap;">
+  <input type="hidden" name="tab" value="historial">
+  <div><label class="field-label">N documento</label>
+    <input type="text" name="doc" class="form-input-compact" value="{html.escape(doc_q)}"
+           placeholder="DNI/CUI..." style="width:130px"></div>
+  <div><label class="field-label">Apellidos</label>
+    <input type="text" name="apellido" class="form-input-compact" value="{html.escape(apellido_q)}"
+           placeholder="Apellidos..." style="width:150px"></div>
+  <button type="submit" class="btn btn-primary btn-sm">Buscar</button>
+</form>
+<div class="historial-grid" style="flex:1; min-height:0;">
+  <div class="historial-col" style="overflow-y:auto;">
+    <div style="font-size:0.75rem; font-weight:700; text-transform:uppercase; color:var(--muted);
+                padding:4px 8px; background:var(--bg-alt); border-bottom:1px solid var(--border);">
+      Historial de ordenes
+    </div>
+    {order_list_html}
+  </div>
+  <div class="historial-col" style="overflow-y:auto;">
+    <div style="font-size:0.75rem; font-weight:700; text-transform:uppercase; color:var(--muted);
+                padding:4px 8px; background:var(--bg-alt); border-bottom:1px solid var(--border);">
+      Resumen clinico
+    </div>
+    <div style="padding:8px;">{pat_html}</div>
+  </div>
+  <div class="historial-col" style="overflow-y:auto;">
+    <div style="font-size:0.75rem; font-weight:700; text-transform:uppercase; color:var(--muted);
+                padding:4px 8px; background:var(--bg-alt); border-bottom:1px solid var(--border);">
+      Resultados de la orden
+    </div>
+    <div style="padding:8px;">{results_html}</div>
+  </div>
+</div>"""
 
         content = f"""
-{alert_html}
-<h2 class="page-title">Análisis de Datos</h2>
-<form method="get" action="/analisis" class="card-form">
-  <div class="form-row">
-    <div class="form-group">
-      <label class="field-label">Desde</label>
-      <input type="date" name="desde" class="form-input"
-             value="{html.escape(desde) if desde else first_of_month}">
-    </div>
-    <div class="form-group">
-      <label class="field-label">Hasta</label>
-      <input type="date" name="hasta" class="form-input"
-             value="{html.escape(hasta) if hasta else today}">
-    </div>
-    <div class="form-group form-group--action">
-      <label class="field-label">&nbsp;</label>
-      <button type="submit" class="btn btn-primary">📊 Consultar</button>
-    </div>
-    <div class="form-group form-group--action">
-      <label class="field-label">&nbsp;</label>
-      <a href="/analisis" class="btn btn-secondary">Todo el tiempo</a>
-    </div>
+<div class="module-layout">
+  <div class="module-header">
+    {tabs_bar}
   </div>
-</form>
-{summary_html}
-{table_html}
-"""
+  <div class="module-body" style="display:flex; flex-direction:column; padding-top:4px;">
+    {tab_content}
+  </div>
+</div>"""
         self._respond_html(_base_layout(content, "analisis", user))
 
     # ===========================================================

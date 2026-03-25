@@ -775,3 +775,401 @@ body {
   font-size: 1rem;
   margin: 0 0 16px;
 }
+
+/* ── Full-height module layout (no page scroll) ── */
+.module-layout {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 130px);
+  overflow: hidden;
+}
+
+.module-header {
+  flex-shrink: 0;
+}
+
+.module-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.module-footer {
+  flex-shrink: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* ── Registro 2-column grid ── */
+.registro-grid {
+  display: grid;
+  grid-template-columns: 420px 1fr;
+  gap: 14px;
+  height: 100%;
+  min-height: 0;
+}
+
+.registro-form {
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.test-panel {
+  display: flex;
+  flex-direction: column;
+  background: #f8fbff;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.test-panel-header {
+  background: #eef2f8;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+
+.test-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 12px;
+}
+
+.test-count-badge {
+  font-weight: 700;
+  color: var(--primary);
+  font-size: 0.93rem;
+}
+
+/* Tests — categorías sin acordeón */
+.test-category-label {
+  font-size: 0.73rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #4a6480;
+  letter-spacing: 0.05em;
+  margin: 10px 0 4px;
+  padding: 2px 0;
+}
+
+.test-checkbox-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px 8px;
+}
+
+.exam-check-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  padding: 2px 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.exam-check-item input[type="checkbox"] {
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+/* ── Compact form fields ── */
+.form-group-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 8px;
+}
+
+.form-group-compact label {
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.form-input-compact,
+.form-select-compact {
+  border: 1px solid #c5d3e6;
+  border-radius: 7px;
+  padding: 5px 8px;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: #fff;
+  width: 100%;
+}
+
+.form-input-compact:focus,
+.form-select-compact:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(46,134,222,0.15);
+}
+
+.form-row-compact {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.form-row-compact .form-group-compact {
+  flex: 1;
+  min-width: 100px;
+  margin-bottom: 0;
+}
+
+/* ── Top action bar (Anotar/Emitir) ── */
+.top-action-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 0 10px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.order-select {
+  font-size: 0.9rem;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.order-select-wide {
+  flex: 1;
+  min-width: 200px;
+}
+
+/* ── Tabs navigation ── */
+.tabs {
+  display: flex;
+  border-bottom: 2px solid var(--border);
+  margin-bottom: 14px;
+  flex-shrink: 0;
+}
+
+.tab-link {
+  padding: 7px 18px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  white-space: nowrap;
+}
+
+.tab-link:hover {
+  color: var(--text);
+}
+
+.tab-link.active {
+  color: var(--primary);
+  border-bottom-color: var(--primary);
+}
+
+/* ── Historial 3-column layout ── */
+.historial-grid {
+  display: grid;
+  grid-template-columns: 260px 260px 1fr;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.historial-col {
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+.historial-col-title {
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Statistics table with area/test rows ── */
+.stats-area-row {
+  background: #eef2f8;
+  font-weight: 700;
+}
+
+.stats-area-row td {
+  font-size: 0.88rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.stats-test-row td:first-child {
+  padding-left: 28px;
+  color: var(--muted);
+}
+
+/* ── Live clock in topbar ── */
+.topbar-clock {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: var(--primary);
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.topbar-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+
+/* ── Alerts bar (Registro) ── */
+.alertas-bar {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 0.88rem;
+  margin-bottom: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.alertas-bar a {
+  color: #856404;
+  font-weight: 600;
+  text-decoration: underline;
+}
+
+/* ── Bottom footer buttons ── */
+.module-footer-btns {
+  display: flex;
+  gap: 10px;
+  padding: 10px 0;
+}
+
+.btn-full {
+  flex: 1;
+  text-align: center;
+}
+
+/* ── Order list in Anotar/Emitir ── */
+.order-info-header {
+  background: #eef4fb;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  margin-bottom: 10px;
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 0.88rem;
+  flex-shrink: 0;
+}
+
+.order-info-header strong {
+  display: block;
+  font-size: 0.73rem;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* ── Search input ── */
+.search-input {
+  border: 1px solid #c5d3e6;
+  border-radius: 7px;
+  padding: 5px 10px;
+  font-size: 0.9rem;
+  background: #fff;
+}
+
+/* ── Compact result fieldset ── */
+.test-fieldset-compact {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.test-fieldset-compact .test-fieldset__header {
+  padding: 7px 12px;
+  font-size: 0.9rem;
+}
+
+.test-fieldset-compact .test-fields {
+  padding: 8px 12px;
+  gap: 5px;
+}
+
+.test-fieldset-compact .test-meta {
+  padding: 6px 12px;
+  gap: 10px;
+}
+
+/* ── Historial order link ── */
+.historial-order-link {
+  display: block;
+  padding: 6px 8px;
+  border-radius: 6px;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 0.88rem;
+  border: 1px solid transparent;
+  margin-bottom: 3px;
+}
+
+.historial-order-link:hover {
+  background: #eef4ff;
+  border-color: var(--border);
+}
+
+.historial-order-link.selected {
+  background: #dbeafe;
+  border-color: var(--primary);
+  color: var(--primary-dark);
+  font-weight: 600;
+}
+
+/* ── Patient clinical summary ── */
+.clinical-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 0.88rem;
+  flex-wrap: wrap;
+}
+
+.clinical-label {
+  font-weight: 600;
+  color: var(--muted);
+  min-width: 80px;
+  font-size: 0.8rem;
+}
+
+@media (max-width: 1100px) {
+  .registro-grid {
+    grid-template-columns: 1fr;
+  }
+  .historial-grid {
+    grid-template-columns: 1fr;
+  }
+}

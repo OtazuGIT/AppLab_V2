@@ -3,6 +3,8 @@
 import datetime
 import json
 import os
+import re
+import unicodedata
 
 from fpdf import FPDF
 
@@ -127,6 +129,231 @@ def _is_blank_result(value) -> bool:
     return False
 
 
+# ---------------------------------------------------------------------------
+# Filtrado de valores de referencia por contexto (edad/sexo/embarazo)
+# Portado de main_window.py líneas 4279–4454 sin dependencias Qt
+# ---------------------------------------------------------------------------
+
+def _normalize_text_for_ref(text) -> str:
+    if not isinstance(text, str):
+        text = str(text or "")
+    normalized = unicodedata.normalize("NFD", text.lower())
+    return "".join(ch for ch in normalized if unicodedata.category(ch) != 'Mn')
+
+
+def _normalize_bool_for_ref(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        return value.strip().lower() in ("1", "true", "yes", "si", "sí")
+    return False
+
+
+def _split_reference_segments(reference_text: str) -> list:
+    segments = []
+    for raw_line in str(reference_text).split('\n'):
+        for part in raw_line.split('|'):
+            cleaned = part.strip()
+            if cleaned:
+                segments.append(cleaned)
+    return segments or [str(reference_text).strip()]
+
+
+def _assign_age_range_groups(groups: set, start_age: float, end_age: float):
+    if end_age < 0 or start_age < 0:
+        return
+    if end_age >= 18 and start_age >= 18:
+        groups.add('adult')
+    elif end_age < 18:
+        if end_age <= 1:
+            groups.add('newborn')
+        groups.add('child')
+    else:
+        groups.update({'child', 'adult'})
+
+
+def _classify_reference_segment(segment: str) -> dict:
+    normalized = _normalize_text_for_ref(segment)
+    groups = set()
+    sexes = set()
+    ranges = []
+    if any(kw in normalized for kw in ["rn", "recien nacido", "neon", "lactant"]):
+        groups.add('newborn')
+    if any(kw in normalized for kw in ["nino", "ninos", "infantil", "pediatr", "menor", "adolesc"]):
+        groups.add('child')
+    if "mes" in normalized:
+        groups.add('child')
+    if any(kw in normalized for kw in ["adulto", "adultos", "mayor", "ancian", "geriatr"]):
+        groups.add('adult')
+    if any(kw in normalized for kw in ["mujer", "mujeres", "femen"]):
+        sexes.add('female')
+        groups.add('adult')
+    if any(kw in normalized for kw in ["hombre", "hombres", "varon", "varones", "mascul"]):
+        sexes.add('male')
+        groups.add('adult')
+    if "gestant" in normalized or "embaraz" in normalized:
+        sexes.add('female')
+        groups.add('adult')
+        groups.add('pregnant')
+    for match in re.finditer(r'(\d+)\s*[-\u2013]\s*(\d+)\s*(?:anos|ano|a)', normalized):
+        start = int(match.group(1))
+        end = int(match.group(2))
+        _assign_age_range_groups(groups, start, end)
+        ranges.append((start, end))
+    for match in re.finditer(r'(>=|<=|>|<)?\s*(\d+)\s*(?:anos|ano|a)', normalized):
+        operator = match.group(1) or ""
+        age = int(match.group(2))
+        _assign_age_range_groups(groups, age, age)
+        if operator == '>':
+            ranges.append((age + 0.001, float('inf')))
+        elif operator == '>=':
+            ranges.append((age, float('inf')))
+        elif operator == '<':
+            ranges.append((float('-inf'), age - 0.001))
+        elif operator == '<=':
+            ranges.append((float('-inf'), age))
+        else:
+            ranges.append((age, age))
+    for match in re.finditer(r'(\d+)\s*(?:mes|meses)', normalized):
+        months = int(match.group(1))
+        groups.add('child')
+        if months <= 1:
+            groups.add('newborn')
+        ranges.append((0, max(months / 12, 0)))
+    return {"groups": groups, "sexes": sexes, "ranges": ranges}
+
+
+def _age_in_range(age_value: float, start: float, end: float) -> bool:
+    if start is None and end is None:
+        return True
+    if start is None:
+        return age_value <= end
+    if end is None:
+        return age_value >= start
+    return start <= age_value <= end
+
+
+def _segment_matches_sex(sexes: set, normalized_sex: str) -> bool:
+    if not sexes:
+        return True
+    if not normalized_sex:
+        return True
+    if any(kw in normalized_sex for kw in ["femen", "mujer"]):
+        return 'female' in sexes
+    if any(kw in normalized_sex for kw in ["mascul", "hombre", "varon"]):
+        return 'male' in sexes
+    return True
+
+
+def _segment_matches_context(classification: dict, age_value, sex: str, is_pregnant: bool) -> bool:
+    groups = classification.get('groups', set())
+    sexes = classification.get('sexes', set())
+    ranges = classification.get('ranges', [])
+    if age_value is not None and ranges:
+        if not any(_age_in_range(age_value, s, e) for s, e in ranges):
+            return False
+    if age_value is None:
+        return _segment_matches_sex(sexes, sex)
+    target_groups = set()
+    if age_value <= 0:
+        target_groups.add('newborn')
+    if age_value < 18:
+        target_groups.add('child')
+    if age_value >= 18:
+        target_groups.add('adult')
+    if 'pregnant' in groups and not is_pregnant:
+        return False
+    if groups and not groups.intersection(target_groups):
+        return False
+    return _segment_matches_sex(sexes, sex)
+
+
+def _segment_matches_group_only(classification: dict, age_value, is_pregnant: bool) -> bool:
+    groups = classification.get('groups', set())
+    if not groups:
+        return False
+    target_groups = set()
+    if age_value is None:
+        target_groups.update({'child', 'adult', 'newborn'})
+    else:
+        if age_value <= 0:
+            target_groups.add('newborn')
+        if age_value < 18:
+            target_groups.add('child')
+        if age_value >= 18:
+            target_groups.add('adult')
+    if 'pregnant' in groups and not is_pregnant:
+        return False
+    non_preg = {g for g in groups if g != 'pregnant'}
+    if non_preg and not non_preg.intersection(target_groups):
+        return False
+    return True
+
+
+def _filter_reference_for_context(reference: str, context) -> str:
+    """Filtra cadena de referencia multigrupo para devolver solo el segmento
+    que corresponde al paciente (edad/sexo/embarazo). Ej: una mujer adulta
+    con Hb solo ve '12.0-16.0 g/dL' en lugar de todos los grupos.
+
+    context = {"patient": {"sex": ..., "is_pregnant": ...},
+               "order":   {"age_years": ...}}
+    """
+    if not reference or reference == "-" or not isinstance(reference, str):
+        return reference
+    if not context:
+        return reference
+    patient_info = context.get("patient", {}) if isinstance(context, dict) else {}
+    order_info = context.get("order", {}) if isinstance(context, dict) else {}
+
+    # Age
+    age_value = None
+    raw_age = order_info.get("age_years")
+    if raw_age is not None:
+        try:
+            age_value = float(raw_age)
+        except (TypeError, ValueError):
+            pass
+    if age_value is None:
+        birth = patient_info.get("birth_date")
+        if birth:
+            try:
+                bd = datetime.datetime.strptime(str(birth), "%Y-%m-%d")
+                age_value = (datetime.datetime.now() - bd).days / 365.25
+            except (ValueError, TypeError):
+                pass
+
+    sex = _normalize_text_for_ref(patient_info.get("sex") or "")
+    is_pregnant = _normalize_bool_for_ref(patient_info.get("is_pregnant"))
+
+    segments = _split_reference_segments(reference)
+    applicable = []
+    sex_only = []
+    group_only = []
+    general = []
+    for seg in segments:
+        cls = _classify_reference_segment(seg)
+        if _segment_matches_context(cls, age_value, sex, is_pregnant):
+            applicable.append(seg.strip())
+            continue
+        if _segment_matches_sex(cls.get('sexes', set()), sex):
+            sex_only.append(seg.strip())
+        if _segment_matches_group_only(cls, age_value, is_pregnant):
+            group_only.append(seg.strip())
+        if not cls['groups'] and not cls['sexes']:
+            general.append(seg.strip())
+    if applicable:
+        return applicable[0]
+    if sex_only:
+        return sex_only[0]
+    if group_only:
+        return group_only[0]
+    if general:
+        return general[0]
+    return segments[0].strip() if segments else reference
+
+
 def _extract_result_structure(test_name: str, raw_result, context=None) -> dict:
     parsed = _parse_stored_result(raw_result)
     template_key = parsed.get("template") if isinstance(parsed, dict) else None
@@ -169,7 +396,7 @@ def _extract_result_structure(test_name: str, raw_result, context=None) -> dict:
                 "key": key,
                 "label": field_def.get("label", key),
                 "value": display_value,
-                "reference": field_def.get("reference") or "-"
+                "reference": _filter_reference_for_context(field_def.get("reference") or "-", context)
             })
         return {"type": "structured", "items": items}
 
@@ -193,6 +420,9 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
     pat = info["patient"]
     ord_inf = info["order"]
     results = info["results"]
+
+    # Context for reference value filtering by patient age/sex/pregnancy
+    _ref_context = {"patient": pat, "order": ord_inf}
 
     doc_text = " ".join([p for p in (pat.get('doc_type'), pat.get('doc_number')) if p]) or "-"
     patient_name = (pat.get('name') or '-').upper()
@@ -464,7 +694,7 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
         sample_type = row[6]
         pending_since = row[8] if len(row) > 8 else None
 
-        structure = _extract_result_structure(test_name, raw_result)
+        structure = _extract_result_structure(test_name, raw_result, _ref_context)
 
         # Skip empty results
         if structure.get("type") == "structured":
