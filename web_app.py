@@ -1414,6 +1414,7 @@ function eliminarOrden() {
       {'<button type="button" class="btn btn-primary" onclick="handleFormSubmit()">Guardar Resultados</button>' if not is_emitido else ''}
       {'<button type="button" class="btn btn-danger btn-sm" onclick="showRejectModal()">Rechazar muestra</button>' if not is_emitido else ''}
       <a href="/resultados" class="btn btn-secondary">Cancelar</a>
+      <a href="/emitir?order_id={order_id}" class="btn btn-secondary btn-sm" title="Ver esta orden en Emitir Resultados">Ver en Emitir →</a>
       <span style="flex:1"></span>
       <span id="draft-saved" style="font-size:0.8rem;color:var(--muted);display:none">Borrador guardado</span>
     </div>
@@ -1648,7 +1649,7 @@ window.addEventListener('beforeunload', function(e) {{
             )
 
         _msgs = {
-            "completo":  ("Orden completa. Lista para emitir.", "success"),
+            "completo":  ("Resultados completos. Orden lista para emitir.", "success"),
             "parcial":   ("Resultados guardados. La orden tiene pruebas pendientes.", "info"),
             "pendiente": ("Datos guardados. Complete los resultados.", "info"),
             "emitido":   ("Esta orden ya fue emitida.", "warning"),
@@ -1656,8 +1657,9 @@ window.addEventListener('beforeunload', function(e) {{
         }
         msg, kind = _msgs.get(order_status, ("Guardado.", "success"))
 
-        if order_status == "completo":
-            self._redirect(f"/emitir?msg=Orden+{order_id}+lista+para+emitir")
+        # Redirect to emitir pre-selecting the order so user can verify and print
+        if order_status in ("completo", "parcial", "rechazado"):
+            self._redirect(f"/emitir?order_id={order_id}&msg={msg.replace(' ', '+')}")
         else:
             return self._handle_resultados_form_get(
                 order_id, message=msg, message_kind=kind
@@ -1679,16 +1681,24 @@ window.addEventListener('beforeunload', function(e) {{
         db = new_db()
         orders = db.get_completed_orders(include_emitted=include_emitted)
 
+        # Status symbols for dropdown labels
+        _STATUS_ICON = {
+            "completo":  "✓",
+            "parcial":   "◑",
+            "rechazado": "✕",
+            "emitido":   "✓✓",
+        }
         # Build dropdown options
-        opts = '<option value="">— Seleccione una orden completada —</option>'
+        opts = '<option value="">— Seleccione una orden —</option>'
         for row in orders:
             (oid, first_name, last_name, date, sample_date,
-             doc_type, doc_number, emitted, emitted_at) = row
+             doc_type, doc_number, emitted, emitted_at, status) = row
             p_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
             p_doc  = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
             d_disp = (date or "")[:10]
+            icon   = _STATUS_ICON.get(status, "")
             em_tag = " [EMITIDO]" if emitted else ""
-            label  = f"#{oid} — {p_name} ({p_doc}) [{d_disp}]{em_tag}"
+            label  = f"[{icon}] #{oid} — {p_name} ({p_doc}) [{d_disp}]{em_tag}"
             sel    = " selected" if oid == selected_order_id else ""
             opts  += f'<option value="{oid}"{sel}>{html.escape(label)}</option>'
 
@@ -1700,42 +1710,76 @@ window.addEventListener('beforeunload', function(e) {{
         # Preview panel: show selected order details
         preview_html = ""
         selected_order_info = ""
+        order_details = None
         if selected_order_id:
             order_details = db.get_order_details(selected_order_id)
             if order_details:
                 pat = order_details["patient"]
                 ord_inf = order_details["order"]
-                p_name = f"{pat.get('first_name','')} {pat.get('last_name','')}".strip()
+                # Use combined "name" field (always set by get_order_details)
+                p_name = pat.get("name") or f"{pat.get('first_name','')} {pat.get('last_name','')}".strip()
                 p_doc  = f"{pat.get('doc_type','')} {pat.get('doc_number','')}".strip()
                 d_disp = (ord_inf.get("date") or "")[:10]
-                emitted_disp = ord_inf.get("emitted_at") or ("Emitido" if ord_inf.get("emitted") else "No emitido")
+                ord_status = ord_inf.get("status", "pendiente")
+                emitted_disp = ord_inf.get("emitted_at") or ("Emitido" if ord_inf.get("emitted") else "")
+                _STATUS_BADGE = {
+                    "completo":  ("badge-success", "COMPLETO"),
+                    "parcial":   ("badge-info",    "PARCIAL"),
+                    "rechazado": ("badge-danger",  "RECHAZADO"),
+                    "emitido":   ("badge-primary",  "EMITIDO"),
+                    "pendiente": ("badge-warning",  "PENDIENTE"),
+                }
+                _bcls, _blbl = _STATUS_BADGE.get(ord_status, ("badge-warning", ord_status.upper()))
+                rejected_reason = ord_inf.get("rejected_reason", "")
+                rejected_banner = ""
+                if ord_status == "rechazado" and rejected_reason:
+                    rejected_banner = (
+                        f'<div class="alert alert-danger" style="margin:0;border-radius:0;">'
+                        f'<strong>MUESTRA RECHAZADA</strong> — {html.escape(rejected_reason)}</div>'
+                    )
                 selected_order_info = f"""
+{rejected_banner}
 <div class="order-info-bar">
   <span><strong>Orden #{selected_order_id}</strong></span>
   <span><strong>Paciente:</strong> {html.escape(p_name)}</span>
   <span><strong>Doc:</strong> {html.escape(p_doc)}</span>
   <span><strong>Fecha:</strong> {html.escape(d_disp)}</span>
-  <span class="muted">{html.escape(str(emitted_disp))}</span>
+  <span class="badge {_bcls}">{_blbl}</span>
+  {'<span class="muted" style="font-size:0.8rem">' + html.escape(emitted_disp) + '</span>' if emitted_disp else ''}
 </div>"""
                 results = order_details.get("results", [])
                 if results:
                     trows = ""
                     for r in results:
-                        t_name = r[0]; raw = r[1] or "—"
-                        disp_val = raw
-                        try:
-                            import json as _json
-                            d = _json.loads(raw)
-                            if isinstance(d, dict) and d.get("type") == "structured":
-                                vals = d.get("values", {})
-                                disp_val = "; ".join(
-                                    f"{k}: {v}" for k, v in vals.items() if v not in ("", None)
-                                ) or "—"
-                            elif isinstance(d, dict):
-                                disp_val = d.get("value", raw)
-                        except Exception:
-                            pass
-                        trows += f"<tr><td>{html.escape(t_name)}</td><td>{html.escape(str(disp_val))}</td></tr>"
+                        t_name = r[0]
+                        raw = r[1] or ""
+                        sample_status = r[3] or "recibida"
+                        observation   = r[5] or ""
+                        disp_val = "—"
+                        if raw:
+                            disp_val = raw
+                            try:
+                                import json as _json
+                                d = _json.loads(raw)
+                                if isinstance(d, dict) and d.get("type") == "structured":
+                                    vals = d.get("values", {})
+                                    disp_val = "; ".join(
+                                        f"{k}: {v}" for k, v in vals.items() if v not in ("", None)
+                                    ) or "—"
+                                elif isinstance(d, dict):
+                                    disp_val = d.get("value", raw)
+                            except Exception:
+                                pass
+                        # Show sample status if not "recibida"
+                        status_tag = ""
+                        if sample_status not in ("recibida", ""):
+                            _st_map = {"pendiente": "⏳ sin muestra", "rechazada": "✕ rechazada"}
+                            status_tag = f' <span class="muted" style="font-size:0.8rem">({_st_map.get(sample_status, sample_status)})</span>'
+                        obs_tag = f' <em class="muted" style="font-size:0.8rem">Obs: {html.escape(observation)}</em>' if observation else ""
+                        trows += (
+                            f"<tr><td>{html.escape(t_name)}</td>"
+                            f"<td>{html.escape(str(disp_val))}{status_tag}{obs_tag}</td></tr>"
+                        )
                     preview_html = f"""
 <div class="table-wrapper" style="max-height:100%; overflow-y:auto;">
   <table class="data-table">
@@ -1755,7 +1799,17 @@ window.addEventListener('beforeunload', function(e) {{
 
         emit_btn_html = ""
         if selected_order_id:
+            # Determine if order is already emitted (locked)
+            _sel_emitted = False
+            if selected_order_id and order_details:
+                _sel_emitted = bool(order_details.get("order", {}).get("emitted_at") or
+                                    order_details.get("order", {}).get("emitted"))
+            _edit_btn = "" if _sel_emitted else (
+                f'<a href="/resultados/{selected_order_id}" class="btn btn-secondary" '
+                f'title="Corregir resultados antes de imprimir">✏ Editar resultados</a>'
+            )
             emit_btn_html = f"""
+  {_edit_btn}
   <a href="/emitir/{selected_order_id}/pdf" class="btn btn-primary" target="_blank">Emitir PDF</a>
   <form method="post" action="/emitir/{selected_order_id}/marcar" style="display:inline; margin-left:8px;">
     <button type="submit" class="btn btn-secondary">Marcar emitido</button>
@@ -1773,7 +1827,10 @@ window.addEventListener('beforeunload', function(e) {{
       <button class="btn btn-primary" onclick="cargarEmitir()">Ver</button>
       <a href="{toggle_url}" class="btn btn-secondary btn-sm">{toggle_label}</a>
       <span class="muted" style="font-size:0.85rem; white-space:nowrap">
-        Completadas: <strong>{orders_count}</strong>
+        En lista: <strong>{orders_count}</strong>
+        &nbsp;·&nbsp;<span title="Completo">✓</span> completo
+        &nbsp;<span title="Parcial">◑</span> parcial
+        &nbsp;<span title="Rechazado">✕</span> rechazado
       </span>
       <a href="/emitir/exportar_csv" class="btn btn-secondary btn-sm" title="Exportar a CSV">Exportar CSV</a>
     </div>

@@ -4589,7 +4589,7 @@ class MainWindow(QMainWindow):
         completed_rows = self.labdb.get_completed_orders(include_emitted=include_emitted)
         self.completed_orders_cache = []
         for row in completed_rows:
-            oid, first, last, date, sample_date, doc_type, doc_number, emitted, emitted_at = row
+            oid, first, last, date, sample_date, doc_type, doc_number, emitted, emitted_at, *_rest = row
             order = {
                 "id": oid,
                 "first_name": (first or "").upper(),

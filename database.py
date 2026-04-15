@@ -646,29 +646,51 @@ class LabDB:
         return self.cur.fetchall()
 
     def get_completed_orders(self, include_emitted=False):
+        # Include orders with any result data: completo, parcial, or rechazado
+        status_cond = "(o.completed=1 OR o.status IN ('completo','parcial','rechazado'))"
         if include_emitted:
-            self.cur.execute("""
-                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number, o.emitted, o.emitted_at
+            self.cur.execute(f"""
+                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date,
+                       p.doc_type, p.doc_number, o.emitted, o.emitted_at,
+                       COALESCE(o.status,'pendiente') AS status
                 FROM orders o
                 JOIN patients p ON o.patient_id=p.id
-                WHERE o.completed=1 AND (o.deleted IS NULL OR o.deleted=0)
-                ORDER BY o.date ASC, o.id ASC
+                WHERE {status_cond} AND (o.deleted IS NULL OR o.deleted=0)
+                ORDER BY
+                  CASE COALESCE(o.status,'pendiente')
+                    WHEN 'completo'  THEN 1
+                    WHEN 'parcial'   THEN 2
+                    WHEN 'rechazado' THEN 3
+                    WHEN 'emitido'   THEN 4
+                    ELSE 5
+                  END, o.date ASC, o.id ASC
             """)
         else:
-            self.cur.execute("""
-                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number, o.emitted, o.emitted_at
+            self.cur.execute(f"""
+                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date,
+                       p.doc_type, p.doc_number, o.emitted, o.emitted_at,
+                       COALESCE(o.status,'pendiente') AS status
                 FROM orders o
                 JOIN patients p ON o.patient_id=p.id
-                WHERE o.completed=1 AND (o.emitted IS NULL OR o.emitted=0)
+                WHERE {status_cond}
+                  AND (o.emitted IS NULL OR o.emitted=0)
+                  AND (o.emitted_at IS NULL OR o.emitted_at='')
                   AND (o.deleted IS NULL OR o.deleted=0)
-                ORDER BY o.date ASC, o.id ASC
+                ORDER BY
+                  CASE COALESCE(o.status,'pendiente')
+                    WHEN 'completo'  THEN 1
+                    WHEN 'parcial'   THEN 2
+                    WHEN 'rechazado' THEN 3
+                    ELSE 4
+                  END, o.date ASC, o.id ASC
             """)
         return self.cur.fetchall()
     def get_order_details(self, order_id):
         self.cur.execute("""
             SELECT p.first_name, p.last_name, p.doc_type, p.doc_number, p.birth_date, p.sex, p.origin, p.hcl,
                    p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
-                   o.date, o.sample_date, o.observations, o.requested_by, o.diagnosis, o.insurance_type, o.fua_number, o.age_years, o.emitted, o.emitted_at
+                   o.date, o.sample_date, o.observations, o.requested_by, o.diagnosis, o.insurance_type, o.fua_number, o.age_years, o.emitted, o.emitted_at,
+                   COALESCE(o.status,'pendiente') AS status, COALESCE(o.rejected_reason,'') AS rejected_reason
             FROM orders o
             JOIN patients p ON o.patient_id = p.id
             WHERE o.id = ?
@@ -678,9 +700,12 @@ class LabDB:
             return None
         (first_name, last_name, doc_type, doc_number, birth_date, sex, origin, hcl,
          is_pregnant, gest_age_weeks, expected_delivery,
-         date, sample_date, obs, req_by, diag, insurance_type, fua_number, age_years, emitted, emitted_at) = header
+         date, sample_date, obs, req_by, diag, insurance_type, fua_number, age_years, emitted, emitted_at,
+         status, rejected_reason) = header
         patient_info = {
             "name": f"{(first_name or '').upper()} {(last_name or '').upper()}".strip(),
+            "first_name": first_name or "",
+            "last_name": last_name or "",
             "doc_type": doc_type,
             "doc_number": doc_number,
             "birth_date": birth_date,
@@ -702,6 +727,8 @@ class LabDB:
             "age_years": age_years,
             "emitted": emitted,
             "emitted_at": emitted_at,
+            "status": status,
+            "rejected_reason": rejected_reason,
         }
         has_sample_type = self._table_has_column("order_tests", "sample_type")
         has_pending_since = self._table_has_column("order_tests", "pending_since")
