@@ -240,6 +240,10 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
         sample_issue_val = row[4] or ""
         observation_val = row[5] or ""
         sample_type_val = row[6] or ""
+        is_pendiente = sample_status == "pendiente"
+        sin_muestra_active = " active" if is_pendiente else ""
+        sin_muestra_label = "&#10003; Sin muestra" if is_pendiente else "Sin muestra"
+        fields_opacity = ' style="opacity:0.35;pointer-events:none"' if is_pendiente else ''
 
         template = get_template_for_test(test_name)
         safe_test = html.escape(test_name)
@@ -248,24 +252,26 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
 <div class="test-fieldset" id="test-block-{idx}">
   <div class="test-fieldset__header">
     <span class="test-name">{safe_test}</span>
-    <span class="sample-status-badge status-{html.escape(sample_status)}">{html.escape(sample_status.capitalize())}</span>
+    <div class="test-header-actions">
+      <button type="button" class="btn-sin-muestra{sin_muestra_active}" id="sin-muestra-btn-{idx}" onclick="toggleSinMuestra(this,{idx})">{sin_muestra_label}</button>
+      <span class="sample-status-badge status-{html.escape(sample_status)}" id="status-badge-{idx}">{html.escape(sample_status.capitalize())}</span>
+    </div>
   </div>
   <input type="hidden" name="test_{idx}_name" value="{safe_test}">
 """
 
         if template:
             fields = template.get("fields", [])
-            fields_html += '<div class="test-fields">'
-
-            # Hemograma differential counter bar
             is_hemograma = "hemograma" in test_name.lower()
+            fields_html += f'<div class="test-fields" id="test-fields-{idx}"{fields_opacity}>'
             if is_hemograma:
                 fields_html += f'<div class="diff-counter diff-pending" id="diff-counter-{idx}">Conteo diferencial: <span id="diff-sum-{idx}">0</span> / 100</div>'
+            fields_html += '<div class="results-grid">'
 
             for fld in fields:
                 ftype = fld.get("type", "line")
                 if ftype == "section":
-                    fields_html += f'<div class="field-section-label">{html.escape(fld.get("label",""))}</div>'
+                    fields_html += f'<div class="rg-section">{html.escape(fld.get("label",""))}</div>'
                     continue
 
                 key = fld.get("key", "")
@@ -281,22 +287,17 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
                 ref_tooltip = f' title="{safe_ref}"' if reference else ""
 
                 if ftype == "bool":
-                    pos_text = html.escape(fld.get("positive_text", "Positivo"))
-                    neg_text = html.escape(fld.get("negative_text", "Negativo"))
-                    pos_checked = 'checked' if existing_val == fld.get("positive_text", "Positivo") else ''
-                    neg_checked = 'checked' if existing_val == fld.get("negative_text", "Negativo") else ''
-                    fields_html += f"""
-<div class="form-group form-group--bool">
-  <label class="field-label"{ref_tooltip}>{safe_label}</label>
-  <div class="bool-options">
-    <label class="bool-opt positive-opt">
-      <input type="radio" name="{field_input_name}" value="{pos_text}" {pos_checked}> {pos_text}
-    </label>
-    <label class="bool-opt negative-opt">
-      <input type="radio" name="{field_input_name}" value="{neg_text}" {neg_checked}> {neg_text}
-    </label>
+                    pos_text = fld.get("positive_text", "Positivo")
+                    neg_text = fld.get("negative_text", "Negativo")
+                    pos_checked = 'checked' if existing_val == pos_text else ''
+                    neg_checked = 'checked' if existing_val == neg_text else ''
+                    fields_html += f"""<div class="rg-row rg-bool-row">
+  <span class="rg-label">{safe_label}</span>
+  <div class="rg-bool-opts">
+    <label class="bool-opt positive-opt"><input type="radio" name="{field_input_name}" value="{html.escape(pos_text)}" {pos_checked}> {html.escape(pos_text)}</label>
+    <label class="bool-opt negative-opt"><input type="radio" name="{field_input_name}" value="{html.escape(neg_text)}" {neg_checked}> {html.escape(neg_text)}</label>
   </div>
-  {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
+  <span class="rg-ref">{safe_ref}</span>
 </div>"""
 
                 elif ftype == "dipstick":
@@ -306,62 +307,52 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
                         neg_cls = " dip-neg" if dv == "Negativo" else ""
                         esc_dv = html.escape(dv)
                         dip_buttons += f'<button type="button" class="dip-btn{neg_cls} {is_active}" data-val="{esc_dv}" onclick="setDipstick(this)">{esc_dv}</button>'
-                    fields_html += f"""
-<div class="form-group form-group--dipstick">
-  <label class="field-label"{ref_tooltip}>{safe_label}</label>
-  <div class="dipstick-opts" data-input="{field_input_name}">
+                    fields_html += f"""<div class="rg-row rg-dip-row">
+  <span class="rg-label">{safe_label}</span>
+  <div class="dipstick-opts rg-dip-btns" data-input="{field_input_name}">
     {dip_buttons}
     <input type="hidden" name="{field_input_name}" value="{html.escape(existing_val)}">
   </div>
-  {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
 </div>"""
 
                 elif ftype == "text_area":
                     safe_val = html.escape(existing_val)
                     qneg_btn = ""
-                    if quick_neg or "no se observan" in reference.lower():
+                    if quick_neg or (reference and "no se observan" in reference.lower()):
                         qv = html.escape(quick_neg or "No se observan")
-                        qneg_btn = f'<button type="button" class="btn-quick-neg" onclick="setQuickNeg(this,\'{qv}\')">(-) No obs.</button>'
-                    fields_html += f"""
-<div class="form-group">
-  <label class="field-label">{safe_label}{qneg_btn}</label>
-  <textarea name="{field_input_name}" class="form-textarea" rows="2" placeholder="{html.escape(placeholder)}">{safe_val}</textarea>
-  {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
+                        qneg_btn = f' <button type="button" class="btn-quick-neg" onclick="setQuickNeg(this,\'{qv}\')">(-)</button>'
+                    fields_html += f"""<div class="rg-textarea-row">
+  <span class="rg-label">{safe_label}{qneg_btn if qneg_btn else ''}</span>
+  <textarea name="{field_input_name}" class="rg-textarea" rows="2" placeholder="{html.escape(placeholder)}">{safe_val}</textarea>
+  {f'<span class="rg-ref rg-ref-ta">{safe_ref}</span>' if safe_ref else ''}
 </div>"""
 
                 elif ftype == "choice":
                     choices = fld.get("choices", [])
-                    opts = "".join(
+                    opts = '<option value="">--</option>' + "".join(
                         f'<option value="{html.escape(c)}" {"selected" if existing_val == c else ""}>{html.escape(c)}</option>'
                         for c in choices
                     )
-                    fields_html += f"""
-<div class="form-group">
-  <label class="field-label"{ref_tooltip}>{safe_label}</label>
-  <select name="{field_input_name}" class="form-select">
-    <option value="">-- Seleccionar --</option>
-    {opts}
-  </select>
-  {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
+                    fields_html += f"""<div class="rg-row">
+  <span class="rg-label">{safe_label}</span>
+  <select name="{field_input_name}" class="rg-select">{opts}</select>
+  <span class="rg-unit"></span>
+  <span class="rg-ref">{safe_ref}</span>
 </div>"""
 
                 else:  # line (default)
-                    unit_label = f'<span class="field-unit">{html.escape(unit)}</span>' if unit else ''
                     safe_val = html.escape(str(existing_val))
                     field_id = f"fld_{idx}_{key}"
                     qneg_btn = ""
-                    if quick_neg or "no se observan" in reference.lower():
+                    if quick_neg or (reference and "no se observan" in reference.lower()):
                         qv = html.escape(quick_neg or "No se observan")
-                        qneg_btn = f'<button type="button" class="btn-quick-neg" onclick="setQuickNeg(this,\'{qv}\')">(-) No obs.</button>'
-                    fields_html += f"""
-<div class="form-group form-group--inline">
-  <label class="field-label"{ref_tooltip}>{safe_label}{qneg_btn}</label>
-  <div class="input-with-unit">
-    <input type="text" id="{field_id}" name="{field_input_name}" class="form-input"
-           value="{safe_val}" placeholder="{html.escape(placeholder)}">
-    {unit_label}
-  </div>
-  {f'<small class="field-ref">{safe_ref}</small>' if reference else ''}
+                        qneg_btn = f' <button type="button" class="btn-quick-neg" onclick="setQuickNeg(this,\'{qv}\')">(-)</button>'
+                    fields_html += f"""<div class="rg-row">
+  <span class="rg-label">{safe_label}{qneg_btn if qneg_btn else ''}</span>
+  <input type="text" id="{field_id}" name="{field_input_name}" class="rg-input"
+         value="{safe_val}" placeholder="{html.escape(placeholder)}">
+  <span class="rg-unit">{html.escape(unit)}</span>
+  <span class="rg-ref">{safe_ref}</span>
 </div>"""
 
             # Auto-calculations JS
@@ -414,46 +405,41 @@ def _build_result_form_html(order_id: int, order_details: dict) -> str:
   updateDiff();
 }})();""")
 
+            fields_html += '</div>'  # close results-grid
             fields_html += '</div>'  # close test-fields
 
         else:
             plain_val = html.escape(_get_plain_result(test_name))
-            fields_html += f"""
-<div class="form-group" style="padding:12px">
-  <label class="field-label">Resultado</label>
-  <textarea name="test_{idx}_plain" class="form-textarea" rows="2">{plain_val}</textarea>
+            fields_html += f"""<div class="test-fields" id="test-fields-{idx}"{fields_opacity}>
+  <div class="results-grid">
+    <div class="rg-textarea-row">
+      <span class="rg-label">Resultado</span>
+      <textarea name="test_{idx}_plain" class="rg-textarea" rows="2">{plain_val}</textarea>
+    </div>
+  </div>
 </div>"""
 
-        # Sample status / meta row
+        # Meta row compacta (inline)
         status_options = ["recibida", "pendiente", "rechazada"]
         status_opts_html = "".join(
             f'<option value="{s}" {"selected" if sample_status == s else ""}>{s.capitalize()}</option>'
             for s in status_options
         )
-        # Show "motivo rechazo" row only when rechazada
-        reject_display = "block" if sample_status == "rechazada" else "none"
+        reject_display = "flex" if sample_status == "rechazada" else "none"
         fields_html += f"""
   <div class="test-meta">
-    <div class="form-group-row">
-      <label>Estado muestra:</label>
-      <select name="test_{idx}_sample_status" class="form-select-sm"
-              onchange="toggleRejectReason(this,{idx})">{status_opts_html}</select>
-    </div>
-    <div class="form-group-row" id="reject-row-{idx}" style="display:{reject_display}">
-      <label>Motivo rechazo:</label>
-      <input type="text" name="test_{idx}_sample_issue" class="form-input-sm"
-             value="{html.escape(sample_issue_val)}"
-             placeholder="Ej. Muestra hemolizada, cantidad insuficiente">
-    </div>
-    <div class="form-group-row">
-      <label>Tipo de muestra:</label>
-      <input type="text" name="test_{idx}_sample_type" class="form-input-sm"
-             value="{html.escape(sample_type_val)}" placeholder="Ej. Sangre venosa">
-    </div>
-    <div class="form-group-row">
-      <label>Obs. prueba:</label>
-      <input type="text" name="test_{idx}_observation" class="form-input-sm"
-             value="{html.escape(observation_val)}">
+    <label class="meta-lbl">Muestra:</label>
+    <input type="text" name="test_{idx}_sample_type" class="meta-input"
+           value="{html.escape(sample_type_val)}" placeholder="Tipo de muestra">
+    <label class="meta-lbl">Obs:</label>
+    <input type="text" name="test_{idx}_observation" class="meta-input"
+           value="{html.escape(observation_val)}" placeholder="Observación">
+    <select name="test_{idx}_sample_status" class="meta-select"
+            onchange="onStatusChange(this,{idx})">{status_opts_html}</select>
+    <div id="reject-row-{idx}" style="display:{reject_display};align-items:center;gap:4px">
+      <label class="meta-lbl">Motivo:</label>
+      <input type="text" name="test_{idx}_sample_issue" class="meta-input"
+             value="{html.escape(sample_issue_val)}" placeholder="Motivo rechazo">
     </div>
   </div>
 </div>"""  # close test-fieldset
@@ -478,18 +464,46 @@ function setDipstick(btn) {
   container.querySelectorAll('.dip-btn').forEach(function(b){ b.classList.remove('dip-active'); });
   btn.classList.add('dip-active');
   container.querySelector('input[type=hidden]').value = btn.dataset.val;
-  markFormDirty();
+  if (typeof markFormDirty === 'function') markFormDirty();
 }
 function setQuickNeg(btn, val) {
-  var grp = btn.closest('.form-group');
-  var inp = grp.querySelector('input[type=text], textarea');
+  var grp = btn.closest('.rg-row, .rg-textarea-row, .form-group');
+  var inp = grp ? grp.querySelector('input[type=text], textarea') : null;
   if (inp) { inp.value = val; }
   btn.classList.add('active');
-  markFormDirty();
+  if (typeof markFormDirty === 'function') markFormDirty();
+}
+function onStatusChange(sel, idx) {
+  var row = document.getElementById('reject-row-' + idx);
+  if (row) row.style.display = sel.value === 'rechazada' ? 'flex' : 'none';
+  var btn = document.getElementById('sin-muestra-btn-' + idx);
+  var fd  = document.getElementById('test-fields-' + idx);
+  var badge = document.getElementById('status-badge-' + idx);
+  if (btn) {
+    var isPend = sel.value === 'pendiente';
+    btn.classList.toggle('active', isPend);
+    btn.textContent = isPend ? '\u2713 Sin muestra' : 'Sin muestra';
+    if (fd) { fd.style.opacity = isPend ? '0.35' : '1'; fd.style.pointerEvents = isPend ? 'none' : ''; }
+  }
+  if (badge) { badge.textContent = sel.value.charAt(0).toUpperCase()+sel.value.slice(1); badge.className = 'sample-status-badge status-'+sel.value; }
+  if (typeof markFormDirty === 'function') markFormDirty();
+}
+function toggleSinMuestra(btn, idx) {
+  var fd  = document.getElementById('test-fields-' + idx);
+  var sel = document.querySelector('[name="test_' + idx + '_sample_status"]');
+  var badge = document.getElementById('status-badge-' + idx);
+  var isActive = btn.classList.contains('active');
+  btn.classList.toggle('active', !isActive);
+  btn.textContent = isActive ? 'Sin muestra' : '\u2713 Sin muestra';
+  var newStatus = isActive ? 'recibida' : 'pendiente';
+  if (fd)  { fd.style.opacity = isActive ? '1' : '0.35'; fd.style.pointerEvents = isActive ? '' : 'none'; }
+  if (sel) sel.value = newStatus;
+  if (badge) { badge.textContent = newStatus.charAt(0).toUpperCase()+newStatus.slice(1); badge.className = 'sample-status-badge status-'+newStatus; }
+  if (typeof markFormDirty === 'function') markFormDirty();
 }
 function toggleRejectReason(sel, idx) {
   var row = document.getElementById('reject-row-' + idx);
-  if (row) row.style.display = sel.value === 'rechazada' ? 'block' : 'none';
+  if (row) row.style.display = sel.value === 'rechazada' ? 'flex' : 'none';
 }
 """
 

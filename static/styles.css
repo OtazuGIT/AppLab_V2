@@ -541,29 +541,61 @@ body {
 
 .test-fieldset__header {
   background: #eef2f8;
-  padding: 10px 16px;
+  padding: 7px 12px;
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 0.92rem;
   border-bottom: 1px solid var(--border);
   display: flex;
   align-items: center;
-  gap: 12px;
+  justify-content: space-between;
+  gap: 8px;
+}
+.test-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 .test-fields {
-  padding: 14px 16px;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 
 .test-meta {
-  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 5px 12px;
   background: #f8fbff;
   border-top: 1px solid var(--border);
-  display: flex;
-  gap: 16px;
-  flex-wrap: wrap;
+}
+.meta-lbl {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #667;
+  white-space: nowrap;
+}
+.meta-input {
+  font-size: 0.78rem;
+  padding: 2px 7px;
+  border: 1px solid #cdd5e0;
+  border-radius: 4px;
+  height: 24px;
+  flex: 1;
+  min-width: 80px;
+  max-width: 200px;
+  box-sizing: border-box;
+}
+.meta-select {
+  font-size: 0.78rem;
+  padding: 2px 5px;
+  border: 1px solid #cdd5e0;
+  border-radius: 4px;
+  height: 24px;
 }
 
 .test-meta .form-group {
@@ -1245,3 +1277,148 @@ body {
 
 /* Rechazada highlight */
 .status-rechazada { background: #f8d7da !important; color: #721c24 !important; }
+
+/* ── Compact results grid ── */
+.results-grid {
+  padding: 6px 12px 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.diff-counter {
+  margin: 4px 0 3px;
+}
+
+/* Row: 4-column label|input|unit|ref */
+.rg-row {
+  display: grid;
+  grid-template-columns: 36% minmax(70px,1fr) 9% 30%;
+  align-items: center;
+  gap: 4px;
+  min-height: 27px;
+}
+.rg-label {
+  font-size: 0.80rem;
+  font-weight: 500;
+  color: #334;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rg-input {
+  height: 25px;
+  font-size: 0.84rem;
+  padding: 1px 6px;
+  border: 1px solid #c8d0dd;
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.rg-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(46,117,182,0.15);
+}
+.rg-select {
+  height: 25px;
+  font-size: 0.80rem;
+  padding: 1px 4px;
+  border: 1px solid #c8d0dd;
+  border-radius: 4px;
+  width: 100%;
+  box-sizing: border-box;
+  grid-column: 2 / span 2;
+}
+.rg-unit {
+  font-size: 0.70rem;
+  color: #777;
+  text-align: center;
+  white-space: nowrap;
+}
+.rg-ref {
+  font-size: 0.68rem;
+  color: #999;
+  line-height: 1.2;
+}
+.rg-section {
+  background: #eef3fb;
+  padding: 2px 6px;
+  font-size: 0.71rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #2e6ab6;
+  border-radius: 3px;
+  margin-top: 5px;
+  letter-spacing: 0.3px;
+}
+
+/* Bool row */
+.rg-bool-row {
+  grid-template-columns: 36% 1fr 26%;
+}
+.rg-bool-opts {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* Dipstick row */
+.rg-dip-row {
+  grid-template-columns: 36% 1fr;
+  min-height: auto;
+}
+.rg-dip-btns {
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+/* Textarea row */
+.rg-textarea-row {
+  display: grid;
+  grid-template-columns: 36% 1fr;
+  gap: 4px;
+  align-items: start;
+  padding: 2px 0;
+}
+.rg-textarea {
+  font-size: 0.82rem;
+  padding: 3px 6px;
+  border: 1px solid #c8d0dd;
+  border-radius: 4px;
+  resize: vertical;
+  min-height: 44px;
+  width: 100%;
+  box-sizing: border-box;
+  font-family: inherit;
+}
+.rg-textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 2px rgba(46,117,182,0.15);
+}
+.rg-ref-ta {
+  grid-column: 2;
+  font-size: 0.68rem;
+  color: #999;
+}
+
+/* ── Sin muestra button ── */
+.btn-sin-muestra {
+  font-size: 0.73rem;
+  padding: 2px 9px;
+  border-radius: 5px;
+  border: 1px solid #d0a020;
+  background: #fffbf0;
+  color: #8a6000;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.12s, border-color 0.12s;
+}
+.btn-sin-muestra:hover { background: #fff3cc; }
+.btn-sin-muestra.active {
+  background: #ffe082;
+  border-color: #d08000;
+  color: #5a3a00;
+  font-weight: 700;
+}
