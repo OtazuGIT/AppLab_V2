@@ -153,6 +153,22 @@ class LabDB:
             )
         """)
         self.conn.commit()
+        # Migración automática: asignar status correcto a órdenes antiguas
+        # (las antiguas tienen status='pendiente' por DEFAULT, aunque estén emitidas o completadas)
+        self.cur.execute("""
+            UPDATE orders SET status='emitido'
+            WHERE status='pendiente'
+              AND emitted=1
+              AND emitted_at IS NOT NULL AND emitted_at != ''
+        """)
+        self.cur.execute("""
+            UPDATE orders SET status='completo'
+            WHERE status='pendiente'
+              AND completed=1
+              AND (emitted IS NULL OR emitted=0)
+        """)
+        self.conn.commit()
+
         # Datos iniciales por defecto
         self.cur.execute("SELECT COUNT(*) FROM users")
         if self.cur.fetchone()[0] == 0:
@@ -178,24 +194,6 @@ class LabDB:
                     )
                     self.conn.commit()
 
-    def get_setting(self, key, default=None):
-        if not key:
-            return default
-        self.cur.execute("SELECT value FROM app_settings WHERE key=?", (key,))
-        row = self.cur.fetchone()
-        if row and row[0] is not None:
-            return row[0]
-        return default
-
-    def set_setting(self, key, value):
-        if not key:
-            return False
-        self.cur.execute(
-            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
-            (key, value)
-        )
-        self.conn.commit()
-        return True
         self.cur.execute("SELECT COUNT(*) FROM tests")
         if self.cur.fetchone()[0] == 0:
             tests_by_category = {
@@ -290,6 +288,24 @@ class LabDB:
         self._ensure_column_exists("order_tests", "deleted_reason", "TEXT")
         self._ensure_column_exists("order_tests", "deleted_by", "INTEGER")
         self._ensure_column_exists("order_tests", "deleted_at", "TEXT")
+    def get_setting(self, key, default=None):
+        if not key:
+            return default
+        self.cur.execute("SELECT value FROM app_settings WHERE key=?", (key,))
+        row = self.cur.fetchone()
+        if row and row[0] is not None:
+            return row[0]
+        return default
+
+    def set_setting(self, key, value):
+        if not key:
+            return False
+        self.cur.execute(
+            "INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)",
+            (key, value)
+        )
+        self.conn.commit()
+        return True
     def authenticate_user(self, username, password):
         self.cur.execute(
             "SELECT id, username, role, full_name, profession, license FROM users WHERE username=? AND password=?",
