@@ -42,3 +42,5 @@
 *.zip    binary
 *.exe    binary
 *.dll    binary
+*.sqlite binary
+*.db     binary

@@ -123,6 +123,8 @@ class LabDB:
         self._ensure_column_exists("orders", "deleted_reason", "TEXT")
         self._ensure_column_exists("orders", "deleted_by", "INTEGER")
         self._ensure_column_exists("orders", "deleted_at", "TEXT")
+        self._ensure_column_exists("orders", "status", "TEXT", default_value="pendiente")
+        self._ensure_column_exists("orders", "rejected_reason", "TEXT")
         self._ensure_column_exists("patients", "is_pregnant", "INTEGER", default_value="0")
         self._ensure_column_exists("patients", "gestational_age_weeks", "INTEGER")
         self._ensure_column_exists("patients", "expected_delivery_date", "TEXT")
@@ -568,12 +570,23 @@ class LabDB:
         return True
 
     def get_pending_orders(self):
+        """Retorna órdenes pendientes/parciales/completas/rechazadas no emitidas."""
         self.cur.execute("""
-            SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number
+            SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date,
+                   p.doc_type, p.doc_number,
+                   COALESCE(o.status, 'pendiente') AS status
             FROM orders o
             JOIN patients p ON o.patient_id=p.id
-            WHERE o.completed=0 AND (o.deleted IS NULL OR o.deleted=0)
-            ORDER BY o.date ASC, o.id ASC
+            WHERE (o.deleted IS NULL OR o.deleted=0)
+              AND (o.emitted_at IS NULL OR o.emitted_at = '')
+            ORDER BY
+              CASE COALESCE(o.status,'pendiente')
+                WHEN 'parcial'   THEN 1
+                WHEN 'pendiente' THEN 2
+                WHEN 'completo'  THEN 3
+                WHEN 'rechazado' THEN 4
+                ELSE 5
+              END, o.date ASC, o.id ASC
         """)
         return self.cur.fetchall()
 
@@ -633,29 +646,51 @@ class LabDB:
         return self.cur.fetchall()
 
     def get_completed_orders(self, include_emitted=False):
+        # Include orders with any result data: completo, parcial, or rechazado
+        status_cond = "(o.completed=1 OR o.status IN ('completo','parcial','rechazado'))"
         if include_emitted:
-            self.cur.execute("""
-                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number, o.emitted, o.emitted_at
+            self.cur.execute(f"""
+                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date,
+                       p.doc_type, p.doc_number, o.emitted, o.emitted_at,
+                       COALESCE(o.status,'pendiente') AS status
                 FROM orders o
                 JOIN patients p ON o.patient_id=p.id
-                WHERE o.completed=1 AND (o.deleted IS NULL OR o.deleted=0)
-                ORDER BY o.date ASC, o.id ASC
+                WHERE {status_cond} AND (o.deleted IS NULL OR o.deleted=0)
+                ORDER BY
+                  CASE COALESCE(o.status,'pendiente')
+                    WHEN 'completo'  THEN 1
+                    WHEN 'parcial'   THEN 2
+                    WHEN 'rechazado' THEN 3
+                    WHEN 'emitido'   THEN 4
+                    ELSE 5
+                  END, o.date ASC, o.id ASC
             """)
         else:
-            self.cur.execute("""
-                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date, p.doc_type, p.doc_number, o.emitted, o.emitted_at
+            self.cur.execute(f"""
+                SELECT o.id, p.first_name, p.last_name, o.date, o.sample_date,
+                       p.doc_type, p.doc_number, o.emitted, o.emitted_at,
+                       COALESCE(o.status,'pendiente') AS status
                 FROM orders o
                 JOIN patients p ON o.patient_id=p.id
-                WHERE o.completed=1 AND (o.emitted IS NULL OR o.emitted=0)
+                WHERE {status_cond}
+                  AND (o.emitted IS NULL OR o.emitted=0)
+                  AND (o.emitted_at IS NULL OR o.emitted_at='')
                   AND (o.deleted IS NULL OR o.deleted=0)
-                ORDER BY o.date ASC, o.id ASC
+                ORDER BY
+                  CASE COALESCE(o.status,'pendiente')
+                    WHEN 'completo'  THEN 1
+                    WHEN 'parcial'   THEN 2
+                    WHEN 'rechazado' THEN 3
+                    ELSE 4
+                  END, o.date ASC, o.id ASC
             """)
         return self.cur.fetchall()
     def get_order_details(self, order_id):
         self.cur.execute("""
             SELECT p.first_name, p.last_name, p.doc_type, p.doc_number, p.birth_date, p.sex, p.origin, p.hcl,
                    p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
-                   o.date, o.sample_date, o.observations, o.requested_by, o.diagnosis, o.insurance_type, o.fua_number, o.age_years, o.emitted, o.emitted_at
+                   o.date, o.sample_date, o.observations, o.requested_by, o.diagnosis, o.insurance_type, o.fua_number, o.age_years, o.emitted, o.emitted_at,
+                   COALESCE(o.status,'pendiente') AS status, COALESCE(o.rejected_reason,'') AS rejected_reason
             FROM orders o
             JOIN patients p ON o.patient_id = p.id
             WHERE o.id = ?
@@ -665,9 +700,12 @@ class LabDB:
             return None
         (first_name, last_name, doc_type, doc_number, birth_date, sex, origin, hcl,
          is_pregnant, gest_age_weeks, expected_delivery,
-         date, sample_date, obs, req_by, diag, insurance_type, fua_number, age_years, emitted, emitted_at) = header
+         date, sample_date, obs, req_by, diag, insurance_type, fua_number, age_years, emitted, emitted_at,
+         status, rejected_reason) = header
         patient_info = {
             "name": f"{(first_name or '').upper()} {(last_name or '').upper()}".strip(),
+            "first_name": first_name or "",
+            "last_name": last_name or "",
             "doc_type": doc_type,
             "doc_number": doc_number,
             "birth_date": birth_date,
@@ -689,6 +727,8 @@ class LabDB:
             "age_years": age_years,
             "emitted": emitted,
             "emitted_at": emitted_at,
+            "status": status,
+            "rejected_reason": rejected_reason,
         }
         has_sample_type = self._table_has_column("order_tests", "sample_type")
         has_pending_since = self._table_has_column("order_tests", "pending_since")
@@ -858,30 +898,55 @@ class LabDB:
         self.conn.commit()
         return False
 
-    def _update_order_completion(self, order_id):
-        self.cur.execute(
-            """
-            SELECT result, sample_status
-            FROM order_tests
-            WHERE order_id=? AND (deleted IS NULL OR deleted=0)
-            """,
+    def _compute_order_status(self, order_id):
+        """Calcula el estado de la orden basado en resultados por test."""
+        row = self.cur.execute(
+            "SELECT emitted_at, status FROM orders WHERE id=?", (order_id,)
+        ).fetchone()
+        if row and row[0]:
+            return "emitido"
+        if row and row[1] == "rechazado":
+            return "rechazado"
+        tests = self.cur.execute(
+            "SELECT result, sample_status FROM order_tests "
+            "WHERE order_id=? AND (deleted IS NULL OR deleted=0)",
             (order_id,)
-        )
-        rows = self.cur.fetchall()
-        if not rows:
-            completed_flag = 1
+        ).fetchall()
+        if not tests:
+            return "pendiente"
+        total_trackable = 0
+        results_with_data = 0
+        for result, sample_status in tests:
+            st = (sample_status or "recibida").strip().lower()
+            if st in {"pendiente", "rechazada"}:
+                continue
+            total_trackable += 1
+            if result not in (None, ""):
+                results_with_data += 1
+        if total_trackable == 0 or results_with_data == 0:
+            return "pendiente"
+        elif results_with_data < total_trackable:
+            return "parcial"
         else:
-            missing_results = 0
-            for result, sample_status in rows:
-                status = (sample_status or "recibida").strip().lower()
-                if status in {"pendiente", "rechazada"}:
-                    continue
-                if result in (None, ""):
-                    missing_results += 1
-            completed_flag = 0 if missing_results else 1
-        self.cur.execute("UPDATE orders SET completed=? WHERE id=?", (completed_flag, order_id))
+            return "completo"
+
+    def _update_order_completion(self, order_id):
+        status = self._compute_order_status(order_id)
+        completed_flag = 1 if status in ("completo", "emitido") else 0
+        self.cur.execute(
+            "UPDATE orders SET completed=?, status=? WHERE id=?",
+            (completed_flag, status, order_id)
+        )
         self.conn.commit()
-        return completed_flag
+        return status  # retorna string en vez de int
+
+    def reject_order(self, order_id, reason):
+        """Marca la orden como rechazada con el motivo dado."""
+        self.cur.execute(
+            "UPDATE orders SET status='rechazado', rejected_reason=?, completed=0 WHERE id=?",
+            ((reason or "").strip(), order_id)
+        )
+        self.conn.commit()
 
     def _pending_test_has_followup(self, patient_id, source_order_id, test_name):
         if not patient_id or not source_order_id or not test_name:
