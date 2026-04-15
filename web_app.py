@@ -521,10 +521,14 @@ def _parse_results_from_form(data: dict, multi_data: dict, total_tests: int) -> 
                 val = data.get(field_input_name, "").strip()
                 if val:
                     values[key] = val
-            # Always serialize (even if empty) so sample_status/observation are still saved
-            result_value = json.dumps({"type": "structured",
-                                       "template": test_name,
-                                       "values": values})
+            # Solo serializar si hay valores ingresados; si está vacío, dejar ""
+            # para que _update_order_completion lo cuente como pendiente
+            if values:
+                result_value = json.dumps({"type": "structured",
+                                           "template": test_name,
+                                           "values": values})
+            else:
+                result_value = ""
         else:
             result_value = data.get(f"test_{i}_plain", "").strip() or ""
 
@@ -1466,7 +1470,7 @@ window.addEventListener('beforeunload', function(e) {{
         if completed:
             self._redirect(f"/emitir?msg=Orden+{order_id}+completada")
         else:
-            self._handle_resultados_form_get(
+            return self._handle_resultados_form_get(
                 order_id,
                 message="Resultados guardados. La orden aún tiene pruebas pendientes.",
                 message_kind="info"
@@ -2385,8 +2389,9 @@ function cargarEmitir() {{
 
 def run(host="0.0.0.0", port=8000):
     server = ThreadingHTTPServer((host, port), WebHandler)
-    print(f"[OK] Servidor activo en http://localhost:{port}")
-    print("   Abre esta URL en Chrome o Brave para usar el sistema.")
+    url = f"http://127.0.0.1:{port}/login"
+    print(f"[OK] Servidor iniciado en: {url}")
+    print("   Abre esa URL en Chrome o Brave.")
     print("   Presiona Ctrl+C para detener.")
     try:
         server.serve_forever()

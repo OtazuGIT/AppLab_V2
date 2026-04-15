@@ -543,27 +543,27 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
 
         def render_pair(label, value, x_start, width, start_y):
             pdf.set_xy(x_start, start_y)
-            pdf.set_font("Arial", 'B', 7.2)
-            pdf.cell(width, 3.2, _ensure_latin1(f"{label.upper()}:"), border=0)
-            pdf.set_font("Arial", '', 7.2)
-            current_y = start_y + 3.2
+            pdf.set_font("Arial", 'B', 7.0)
+            pdf.cell(width, 2.8, _ensure_latin1(f"{label.upper()}:"), border=0)
+            pdf.set_font("Arial", '', 7.0)
+            current_y = start_y + 2.8
             value_lines = wrap_value_lines(value, width - 1.2)
             for line in value_lines:
                 pdf.set_xy(x_start, current_y)
-                pdf.cell(width, 3.0, line, border=0)
-                current_y += 3.0
+                pdf.cell(width, 2.6, line, border=0)
+                current_y += 2.6
             return current_y
 
         pdf.set_font("Arial", 'B', 8.8)
         pdf.set_text_color(30, 30, 30)
-        pdf.cell(0, 5, _ensure_latin1("Datos del paciente"), ln=1)
+        pdf.cell(0, 4, _ensure_latin1("Datos del paciente"), ln=1)
         pdf.set_text_color(0, 0, 0)
-        pdf.ln(1)
+        pdf.ln(0.3)
         for left, right in info_pairs:
             start_y = pdf.get_y()
             left_end = render_pair(left[0], left[1], pdf.l_margin, col_width, start_y)
             right_end = render_pair(right[0], right[1], pdf.l_margin + col_width, col_width, start_y)
-            pdf.set_y(max(left_end, right_end) + 1.2)
+            pdf.set_y(max(left_end, right_end) + 0.5)
 
     def draw_page_header():
         top_y = max(5, pdf.t_margin - 6)
@@ -582,7 +582,7 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
             pdf.cell(0, 6, _ensure_latin1(LAB_TITLE), ln=1, align='C')
             pdf.ln(2)
         draw_patient_info()
-        pdf.ln(1.0)
+        pdf.ln(0.3)
         if is_copy:
             copy_note = (f"Copia reimpresa el {print_display}"
                          if print_display else "Copia reimpresa")
@@ -593,14 +593,14 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
             pdf.ln(0.5)
 
     table_total_width = pdf.w - pdf.l_margin - pdf.r_margin
-    column_widths = [table_total_width * 0.38, table_total_width * 0.27,
-                     table_total_width * 0.35]
+    column_widths = [table_total_width * 0.40, table_total_width * 0.30,
+                     table_total_width * 0.30]
 
     def render_table_header(widths, on_new_page=None):
-        header_height = 5.6
+        header_height = 4.5
         if ensure_space(header_height) and on_new_page:
             on_new_page()
-        pdf.set_font("Arial", 'B', 7.2)
+        pdf.set_font("Arial", 'B', 7.0)
         x_start = pdf.l_margin
         pdf.set_x(x_start)
         headers = ["Parámetro", "Resultado", "Valores de referencia"]
@@ -617,9 +617,9 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
         pdf.set_text_color(0, 0, 0)
 
     def render_table_row(texts, widths, on_new_page):
-        line_height = 3.1
+        line_height = 2.7
         padding_x = 1.3
-        padding_y = 0.8
+        padding_y = 0.5
         pdf.set_font("Arial", '', 6.8)
         lines_by_cell = []
         max_lines = 1
@@ -659,7 +659,7 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
         pdf.set_xy(pdf.l_margin, y_start + row_height)
 
     def render_section_row(label, total_width, widths, on_new_page):
-        section_height = 4.2
+        section_height = 3.4
         if ensure_space(section_height + 1):
             on_new_page()
             render_table_header(widths, on_new_page)
@@ -671,13 +671,13 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
         pdf.set_text_color(0, 0, 0)
 
     def draw_test_header(title):
-        ensure_space(9)
+        ensure_space(7)
         pdf.set_font("Arial", 'B', 8.2)
         pdf.set_text_color(255, 255, 255)
         pdf.set_fill_color(46, 117, 182)
-        pdf.cell(0, 6, _ensure_latin1(title.upper()), ln=1, fill=True)
+        pdf.cell(0, 5, _ensure_latin1(title.upper()), ln=1, fill=True)
         pdf.set_text_color(0, 0, 0)
-        pdf.ln(1.2)
+        pdf.ln(0.6)
 
     # Draw header on first page
     draw_page_header()
@@ -714,17 +714,17 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
         sample_text = (sample_type or "").strip() if isinstance(sample_type, str) else ""
         if not sample_text:
             sample_text = default_sample_type_for_test(test_name)
-        ensure_space(4.8)
+        ensure_space(4.0)
         pdf.set_font("Arial", 'B', 6.9)
         pdf.set_text_color(67, 91, 114)
-        pdf.cell(0, 3.8, _ensure_latin1(f"MUESTRA: {sample_text}"), ln=1)
+        pdf.cell(0, 3.0, _ensure_latin1(f"MUESTRA: {sample_text}"), ln=1)
         pdf.set_text_color(0, 0, 0)
 
         def on_new_page():
             draw_test_header(test_name)
             pdf.set_font("Arial", 'B', 6.9)
             pdf.set_text_color(67, 91, 114)
-            pdf.cell(0, 3.8, _ensure_latin1(f"MUESTRA: {sample_text}"), ln=1)
+            pdf.cell(0, 3.0, _ensure_latin1(f"MUESTRA: {sample_text}"), ln=1)
             pdf.set_text_color(0, 0, 0)
 
         if structure.get("type") == "structured":
@@ -742,25 +742,25 @@ def _render_order_pdf(pdf: FPDF, info: dict, emission_display: str,
                 render_table_row(row_texts, column_widths, on_new_page)
         else:
             text_value = structure.get("value", "")
-            ensure_space(6)
+            ensure_space(5)
             normalized_text, is_italic = normalize_styled_text(text_value)
             pdf.set_font("Arial", 'I' if is_italic else '', 7)
-            pdf.multi_cell(0, 3.8, _ensure_latin1(normalized_text))
+            pdf.multi_cell(0, 3.2, _ensure_latin1(normalized_text))
 
         if status_text:
-            ensure_space(5)
+            ensure_space(4)
             pdf.set_font("Arial", 'I', 6.6)
             pdf.set_text_color(166, 38, 38)
-            pdf.multi_cell(0, 3.8, _ensure_latin1(f"Estado de muestra: {status_text}"))
+            pdf.multi_cell(0, 3.2, _ensure_latin1(f"Estado de muestra: {status_text}"))
             pdf.set_text_color(0, 0, 0)
 
         if observation_text:
-            ensure_space(5)
+            ensure_space(4)
             normalized_obs, is_obs_italic = normalize_styled_text(observation_text)
             pdf.set_font("Arial", 'I' if is_obs_italic else '', 6.6)
-            pdf.multi_cell(0, 3.8, _ensure_latin1(f"Observación: {normalized_obs}"))
+            pdf.multi_cell(0, 3.2, _ensure_latin1(f"Observación: {normalized_obs}"))
 
-        pdf.ln(2)
+        pdf.ln(0.8)
 
     # General observations
     if ord_inf.get('observations') and str(ord_inf['observations']).strip().upper() not in {"", "N/A"}:
@@ -799,8 +799,8 @@ def generate_order_pdf(order_details: dict, emitted_at: str) -> bytes:
             pass
 
     pdf = FPDF('P', 'mm', 'A4')
-    pdf.set_margins(10, 8, 10)
-    pdf.set_auto_page_break(True, margin=10)
+    pdf.set_margins(7, 6, 7)
+    pdf.set_auto_page_break(True, margin=8)
     pdf.add_page()
 
     _render_order_pdf(pdf, order_details, emission_display,
