@@ -812,6 +812,47 @@ def generate_order_pdf(order_details: dict, emitted_at: str) -> bytes:
     return bytes(raw)
 
 
+def generate_batch_pdf(orders_details_list: list, emitted_at: str) -> bytes:
+    """Genera un PDF combinado para múltiples órdenes (una por página).
+
+    Args:
+        orders_details_list: lista de dicts retornados por db.get_order_details()
+        emitted_at: timestamp de emisión compartido
+
+    Returns:
+        bytes del PDF listo para enviar como respuesta HTTP
+    """
+    try:
+        emission_dt = datetime.datetime.strptime(emitted_at, "%Y-%m-%d %H:%M:%S")
+        emission_display = emission_dt.strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        emission_display = emitted_at or datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    pdf = FPDF('P', 'mm', 'A4')
+    pdf.set_margins(7, 6, 7)
+    pdf.set_auto_page_break(True, margin=8)
+
+    for order_details in orders_details_list:
+        pdf.add_page()
+        existing_emitted_at = order_details.get("order", {}).get("emitted_at")
+        is_copy = bool(existing_emitted_at)
+        print_display = datetime.datetime.now().strftime("%d/%m/%Y %H:%M") if is_copy else emission_display
+        _emission = emission_display
+        if is_copy and existing_emitted_at:
+            try:
+                orig_dt = datetime.datetime.strptime(existing_emitted_at, "%Y-%m-%d %H:%M:%S")
+                _emission = orig_dt.strftime("%d/%m/%Y %H:%M")
+            except Exception:
+                pass
+        _render_order_pdf(pdf, order_details, _emission,
+                          print_display=print_display, is_copy=is_copy)
+
+    raw = pdf.output(dest='S')
+    if isinstance(raw, str):
+        return raw.encode('latin-1')
+    return bytes(raw)
+
+
 def generate_registro_pdf(rows, desde: str, hasta: str) -> bytes:
     """Genera un PDF con el registro de pruebas para el rango dado.
     rows: output of db.get_results_in_range()

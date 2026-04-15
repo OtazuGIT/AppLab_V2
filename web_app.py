@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from database import LabDB
-from pdf_generator import generate_order_pdf
+from pdf_generator import generate_order_pdf, generate_batch_pdf
 from test_definitions import (CATEGORY_DISPLAY_ORDER, TEST_TEMPLATES,
                                get_template_for_test)
 
@@ -666,6 +666,8 @@ class WebHandler(BaseHTTPRequestHandler):
             return self._handle_resultados_rechazar(int(parts[1]))
         if parts[0] == "emitir" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "marcar":
             return self._handle_emitir_marcar(int(parts[1]))
+        if parts[0] == "emitir" and len(parts) == 2 and parts[1] == "batch":
+            return self._handle_emitir_batch()
         if parts[0] == "configuracion":
             if len(parts) == 3 and parts[1] == "usuario" and parts[2] == "nuevo":
                 return self._handle_config_nuevo_usuario()
@@ -1681,15 +1683,17 @@ window.addEventListener('beforeunload', function(e) {{
         db = new_db()
         orders = db.get_completed_orders(include_emitted=include_emitted)
 
-        # Status symbols for dropdown labels
-        _STATUS_ICON = {
-            "completo":  "✓",
-            "parcial":   "◑",
-            "rechazado": "✕",
-            "emitido":   "✓✓",
+        _STATUS_ICON = {"completo": "✓", "parcial": "◑", "rechazado": "✕", "emitido": "✓✓"}
+        _STATUS_BADGE = {
+            "completo":  ("badge-success", "COMPLETO"),
+            "parcial":   ("badge-info",    "PARCIAL"),
+            "rechazado": ("badge-danger",  "RECHAZADO"),
+            "emitido":   ("badge-primary", "EMITIDO"),
+            "pendiente": ("badge-warning", "PENDIENTE"),
         }
-        # Build dropdown options
-        opts = '<option value="">— Seleccione una orden —</option>'
+
+        # Build checkbox table rows
+        table_rows = ""
         for row in orders:
             (oid, first_name, last_name, date, sample_date,
              doc_type, doc_number, emitted, emitted_at, status) = row
@@ -1697,165 +1701,230 @@ window.addEventListener('beforeunload', function(e) {{
             p_doc  = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
             d_disp = (date or "")[:10]
             icon   = _STATUS_ICON.get(status, "")
-            em_tag = " [EMITIDO]" if emitted else ""
-            label  = f"[{icon}] #{oid} — {p_name} ({p_doc}) [{d_disp}]{em_tag}"
-            sel    = " selected" if oid == selected_order_id else ""
-            opts  += f'<option value="{oid}"{sel}>{html.escape(label)}</option>'
+            bcls, blbl = _STATUS_BADGE.get(status, ("badge-warning", status.upper()))
+            checked = " checked" if (oid == selected_order_id and not emitted) else ""
+            disabled = " disabled" if emitted else ""
+            row_cls = " emitir-row-emitido" if emitted else ""
+            sel_cls = " emitir-row-selected" if oid == selected_order_id else ""
+            search_data = f"{oid} {p_name} {p_doc} {d_disp}".lower()
+            table_rows += f"""
+<tr class="emitir-row{row_cls}{sel_cls}" data-oid="{oid}" data-search="{html.escape(search_data)}"
+    onclick="selectRow(this,{oid})">
+  <td onclick="event.stopPropagation()" style="width:32px;text-align:center;">
+    <input type="checkbox" name="order_ids" value="{oid}"{checked}{disabled}
+           onchange="updateBatchBtn()">
+  </td>
+  <td style="font-weight:600;width:44px">#{oid}</td>
+  <td>{html.escape(p_name)}</td>
+  <td class="muted" style="font-size:0.82rem">{html.escape(p_doc)}</td>
+  <td class="muted" style="font-size:0.82rem;white-space:nowrap">{d_disp}</td>
+  <td><span class="badge {bcls}" style="font-size:0.72rem">{icon} {blbl}</span></td>
+</tr>"""
 
         orders_count = len(orders)
+        non_emitted_count = sum(1 for r in orders if not r[7])  # r[7] = emitted flag
         toggle_label = "Ocultar emitidos" if include_emitted else "Mostrar emitidos"
         toggle_url   = "/emitir" if include_emitted else "/emitir?include_emitted=1"
         alert_html   = _alert(html.escape(message)) if message else ""
 
-        # Preview panel: show selected order details
+        # Preview panel for selected order
         preview_html = ""
-        selected_order_info = ""
+        preview_header = ""
+        preview_footer = ""
         order_details = None
         if selected_order_id:
             order_details = db.get_order_details(selected_order_id)
             if order_details:
                 pat = order_details["patient"]
                 ord_inf = order_details["order"]
-                # Use combined "name" field (always set by get_order_details)
                 p_name = pat.get("name") or f"{pat.get('first_name','')} {pat.get('last_name','')}".strip()
                 p_doc  = f"{pat.get('doc_type','')} {pat.get('doc_number','')}".strip()
                 d_disp = (ord_inf.get("date") or "")[:10]
                 ord_status = ord_inf.get("status", "pendiente")
-                emitted_disp = ord_inf.get("emitted_at") or ("Emitido" if ord_inf.get("emitted") else "")
-                _STATUS_BADGE = {
-                    "completo":  ("badge-success", "COMPLETO"),
-                    "parcial":   ("badge-info",    "PARCIAL"),
-                    "rechazado": ("badge-danger",  "RECHAZADO"),
-                    "emitido":   ("badge-primary",  "EMITIDO"),
-                    "pendiente": ("badge-warning",  "PENDIENTE"),
-                }
-                _bcls, _blbl = _STATUS_BADGE.get(ord_status, ("badge-warning", ord_status.upper()))
+                bcls, blbl = _STATUS_BADGE.get(ord_status, ("badge-warning", ord_status.upper()))
                 rejected_reason = ord_inf.get("rejected_reason", "")
-                rejected_banner = ""
+                emitted_disp = ord_inf.get("emitted_at") or ""
+                _sel_emitted = bool(ord_inf.get("emitted_at") or ord_inf.get("emitted"))
+                rej_banner = ""
                 if ord_status == "rechazado" and rejected_reason:
-                    rejected_banner = (
-                        f'<div class="alert alert-danger" style="margin:0;border-radius:0;">'
-                        f'<strong>MUESTRA RECHAZADA</strong> — {html.escape(rejected_reason)}</div>'
-                    )
-                selected_order_info = f"""
-{rejected_banner}
-<div class="order-info-bar">
-  <span><strong>Orden #{selected_order_id}</strong></span>
-  <span><strong>Paciente:</strong> {html.escape(p_name)}</span>
-  <span><strong>Doc:</strong> {html.escape(p_doc)}</span>
-  <span><strong>Fecha:</strong> {html.escape(d_disp)}</span>
-  <span class="badge {_bcls}">{_blbl}</span>
-  {'<span class="muted" style="font-size:0.8rem">' + html.escape(emitted_disp) + '</span>' if emitted_disp else ''}
+                    rej_banner = (f'<div class="alert alert-danger" style="margin:4px 0;padding:4px 8px;">'
+                                  f'<strong>MUESTRA RECHAZADA</strong> — {html.escape(rejected_reason)}</div>')
+                preview_header = f"""
+{rej_banner}
+<div class="order-info-bar" style="margin:0;border-radius:0;border-top:1px solid var(--border)">
+  <span><strong>#{selected_order_id}</strong> {html.escape(p_name)}</span>
+  <span class="muted">{html.escape(p_doc)}</span>
+  <span class="muted">{d_disp}</span>
+  <span class="badge {bcls}">{blbl}</span>
+  {'<span class="muted" style="font-size:0.78rem">' + html.escape(emitted_disp[:16]) + '</span>' if emitted_disp else ''}
 </div>"""
                 results = order_details.get("results", [])
                 if results:
                     trows = ""
                     for r in results:
-                        t_name = r[0]
-                        raw = r[1] or ""
-                        sample_status = r[3] or "recibida"
-                        observation   = r[5] or ""
+                        t_name = r[0]; raw = r[1] or ""; ss = r[3] or "recibida"; obs = r[5] or ""
                         disp_val = "—"
                         if raw:
                             disp_val = raw
                             try:
-                                import json as _json
-                                d = _json.loads(raw)
+                                d = json.loads(raw)
                                 if isinstance(d, dict) and d.get("type") == "structured":
-                                    vals = d.get("values", {})
-                                    disp_val = "; ".join(
-                                        f"{k}: {v}" for k, v in vals.items() if v not in ("", None)
-                                    ) or "—"
+                                    disp_val = "; ".join(f"{k}: {v}" for k, v in d.get("values", {}).items() if v not in ("", None)) or "—"
                                 elif isinstance(d, dict):
                                     disp_val = d.get("value", raw)
                             except Exception:
                                 pass
-                        # Show sample status if not "recibida"
-                        status_tag = ""
-                        if sample_status not in ("recibida", ""):
-                            _st_map = {"pendiente": "⏳ sin muestra", "rechazada": "✕ rechazada"}
-                            status_tag = f' <span class="muted" style="font-size:0.8rem">({_st_map.get(sample_status, sample_status)})</span>'
-                        obs_tag = f' <em class="muted" style="font-size:0.8rem">Obs: {html.escape(observation)}</em>' if observation else ""
-                        trows += (
-                            f"<tr><td>{html.escape(t_name)}</td>"
-                            f"<td>{html.escape(str(disp_val))}{status_tag}{obs_tag}</td></tr>"
-                        )
-                    preview_html = f"""
-<div class="table-wrapper" style="max-height:100%; overflow-y:auto;">
-  <table class="data-table">
+                        st_tag = ""
+                        if ss not in ("recibida", ""):
+                            st_tag = f' <span class="muted">({"sin muestra" if ss=="pendiente" else ss})</span>'
+                        obs_tag = f' <em class="muted">Obs: {html.escape(obs)}</em>' if obs else ""
+                        trows += (f"<tr><td style='font-size:0.82rem'>{html.escape(t_name)}</td>"
+                                  f"<td style='font-size:0.82rem'>{html.escape(str(disp_val))}{st_tag}{obs_tag}</td></tr>")
+                    preview_html = f"""<div style="overflow-y:auto;flex:1;min-height:0">
+  <table class="data-table" style="font-size:0.82rem">
     <thead><tr><th>Examen</th><th>Resultado</th></tr></thead>
     <tbody>{trows}</tbody>
-  </table>
-</div>"""
+  </table></div>"""
                 else:
-                    preview_html = '<p class="muted text-center">Sin resultados registrados.</p>'
+                    preview_html = '<p class="muted text-center" style="padding:20px">Sin resultados registrados.</p>'
+
+                _edit_btn = "" if _sel_emitted else (
+                    f'<a href="/resultados/{selected_order_id}" class="btn btn-secondary btn-sm">'
+                    f'✏ Editar</a> ')
+                preview_footer = f"""
+<div style="display:flex;gap:8px;align-items:center;padding:8px 12px;
+            border-top:1px solid var(--border);flex-shrink:0">
+  {_edit_btn}<a href="/emitir/{selected_order_id}/pdf" class="btn btn-primary btn-sm"
+    target="_blank">Emitir PDF individual</a>
+  <form method="post" action="/emitir/{selected_order_id}/marcar" style="display:inline;">
+    <button type="submit" class="btn btn-secondary btn-sm">Marcar emitido</button>
+  </form>
+</div>"""
 
         if not preview_html:
-            preview_html = """
-<div style="text-align:center; color:var(--muted); padding:40px 0;">
-  <div style="font-size:3rem; margin-bottom:12px">📄</div>
-  <p style="font-size:1.05rem">Seleccione una orden para ver los resultados y emitir el PDF</p>
+            preview_html = """<div style="display:flex;align-items:center;justify-content:center;
+  flex:1;color:var(--muted);flex-direction:column;gap:8px;padding:20px">
+  <div style="font-size:2.5rem">📄</div>
+  <p style="font-size:0.95rem">Haz clic en una fila para ver el detalle</p>
 </div>"""
 
-        emit_btn_html = ""
-        if selected_order_id:
-            # Determine if order is already emitted (locked)
-            _sel_emitted = False
-            if selected_order_id and order_details:
-                _sel_emitted = bool(order_details.get("order", {}).get("emitted_at") or
-                                    order_details.get("order", {}).get("emitted"))
-            _edit_btn = "" if _sel_emitted else (
-                f'<a href="/resultados/{selected_order_id}" class="btn btn-secondary" '
-                f'title="Corregir resultados antes de imprimir">✏ Editar resultados</a>'
-            )
-            emit_btn_html = f"""
-  {_edit_btn}
-  <a href="/emitir/{selected_order_id}/pdf" class="btn btn-primary" target="_blank">Emitir PDF</a>
-  <form method="post" action="/emitir/{selected_order_id}/marcar" style="display:inline; margin-left:8px;">
-    <button type="submit" class="btn btn-secondary">Marcar emitido</button>
-  </form>"""
-
         content = f"""{alert_html}
-<div class="module-layout">
+<form id="batch-form" method="post" action="/emitir/batch">
+<div class="module-layout" style="overflow:hidden">
   <div class="module-header">
     <div class="top-action-bar">
       <input type="text" id="emitir-search" class="form-input-compact"
-             placeholder="Buscar nombre, doc, #..." style="width:210px" oninput="filterEmitir()">
-      <select id="emitir-select" class="order-select" onchange="updateEmitirBtn()">
-        {opts}
-      </select>
-      <button class="btn btn-primary" onclick="cargarEmitir()">Ver</button>
-      <a href="{toggle_url}" class="btn btn-secondary btn-sm">{toggle_label}</a>
-      <span class="muted" style="font-size:0.85rem; white-space:nowrap">
-        En lista: <strong>{orders_count}</strong>
-        &nbsp;·&nbsp;<span title="Completo">✓</span> completo
-        &nbsp;<span title="Parcial">◑</span> parcial
-        &nbsp;<span title="Rechazado">✕</span> rechazado
+             placeholder="Buscar nombre, doc, #..." style="width:200px" oninput="filterEmitir()">
+      <button type="button" class="btn btn-secondary btn-sm" onclick="selectAll(true)">Seleccionar todos</button>
+      <button type="button" class="btn btn-secondary btn-sm" onclick="selectAll(false)">Limpiar</button>
+      <span class="muted" style="font-size:0.85rem">
+        Lista: <strong>{orders_count}</strong>
+        &nbsp;·&nbsp; ✓ completo &nbsp; ◑ parcial &nbsp; ✕ rechazado
       </span>
-      <a href="/emitir/exportar_csv" class="btn btn-secondary btn-sm" title="Exportar a CSV">Exportar CSV</a>
+      <a href="{toggle_url}" class="btn btn-secondary btn-sm">{toggle_label}</a>
+      <a href="/emitir/exportar_csv" class="btn btn-secondary btn-sm">Exportar CSV</a>
     </div>
-    {selected_order_info}
   </div>
-  <div class="module-body">
-    {preview_html}
+  <div class="module-body" style="display:flex;gap:0;padding:0;overflow:hidden">
+    <!-- LEFT: checklist -->
+    <div style="flex:1;min-width:0;overflow-y:auto;border-right:1px solid var(--border)">
+      <table class="data-table emitir-checklist" style="font-size:0.83rem">
+        <thead>
+          <tr>
+            <th style="width:32px;text-align:center">
+              <input type="checkbox" id="chk-all" title="Seleccionar todos"
+                     onchange="selectAll(this.checked)">
+            </th>
+            <th>#</th><th>Paciente</th><th>Doc</th><th>Fecha</th><th>Estado</th>
+          </tr>
+        </thead>
+        <tbody id="emitir-tbody">
+          {table_rows}
+        </tbody>
+      </table>
+    </div>
+    <!-- RIGHT: preview -->
+    <div id="emitir-preview" style="width:380px;flex-shrink:0;display:flex;
+         flex-direction:column;min-height:0;background:var(--surface)">
+      {preview_header}
+      {preview_html}
+      {preview_footer}
+    </div>
   </div>
-  <div class="module-footer" style="display:flex; gap:10px; align-items:center;">
-    {emit_btn_html}
+  <div class="module-footer" style="display:flex;gap:10px;align-items:center">
+    <button type="submit" id="btn-batch" class="btn btn-primary" disabled
+            onclick="return confirmBatch()">
+      Emitir seleccionados (<span id="sel-count">0</span>)
+    </button>
+    <span class="muted" style="font-size:0.82rem" id="batch-hint">
+      Marca las órdenes de la lista y haz clic aquí para generar un PDF combinado
+    </span>
+    <span style="flex:1"></span>
+    <span class="muted" style="font-size:0.82rem">
+      Pendientes sin emitir: <strong>{non_emitted_count}</strong>
+    </span>
   </div>
 </div>
+</form>
 <script>
+function updateBatchBtn() {{
+  var n = document.querySelectorAll('#emitir-tbody input[type=checkbox]:checked').length;
+  document.getElementById('sel-count').textContent = n;
+  document.getElementById('btn-batch').disabled = (n === 0);
+  document.getElementById('batch-hint').textContent =
+    n > 0 ? 'Se generará un PDF con ' + n + ' informe(s)' :
+             'Marca las órdenes de la lista y haz clic aquí para generar un PDF combinado';
+  // sync header checkbox
+  var total = document.querySelectorAll('#emitir-tbody input[type=checkbox]:not(:disabled)').length;
+  var hdr = document.getElementById('chk-all');
+  hdr.checked = (n > 0 && n === total);
+  hdr.indeterminate = (n > 0 && n < total);
+}}
+function selectAll(val) {{
+  document.querySelectorAll('#emitir-tbody input[type=checkbox]:not(:disabled)')
+    .forEach(function(cb) {{ cb.checked = val; }});
+  updateBatchBtn();
+}}
+function selectRow(tr, oid) {{
+  // Navigate to show preview without losing checkbox state
+  // We POST-redirect via GET with order_id param
+  var url = '/emitir?order_id=' + oid;
+  var ie = new URLSearchParams(window.location.search).get('include_emitted');
+  if (ie) url += '&include_emitted=' + ie;
+  // Preserve currently checked boxes in session storage
+  var checked = [];
+  document.querySelectorAll('#emitir-tbody input[type=checkbox]:checked')
+    .forEach(function(cb) {{ checked.push(cb.value); }});
+  sessionStorage.setItem('emitir_checked', JSON.stringify(checked));
+  window.location.href = url;
+}}
 function filterEmitir() {{
   var q = document.getElementById('emitir-search').value.toLowerCase();
-  document.getElementById('emitir-select').querySelectorAll('option').forEach(function(opt) {{
-    if (!opt.value) {{ opt.style.display = ''; return; }}
-    opt.style.display = opt.text.toLowerCase().includes(q) ? '' : 'none';
+  document.querySelectorAll('#emitir-tbody tr').forEach(function(tr) {{
+    var s = (tr.dataset.search || '');
+    tr.style.display = s.includes(q) ? '' : 'none';
   }});
 }}
-function updateEmitirBtn() {{}}
-function cargarEmitir() {{
-  var v = document.getElementById('emitir-select').value;
-  if (v) window.location.href = '/emitir?order_id=' + v;
+function confirmBatch() {{
+  var n = document.querySelectorAll('#emitir-tbody input[type=checkbox]:checked').length;
+  if (n === 0) return false;
+  return confirm('Se emitirán ' + n + ' informe(s) en un solo PDF y quedarán marcados como emitidos. ¿Continuar?');
 }}
+// Restore checked state from sessionStorage after row-click navigation
+(function() {{
+  var saved = sessionStorage.getItem('emitir_checked');
+  if (saved) {{
+    try {{
+      var ids = JSON.parse(saved);
+      ids.forEach(function(id) {{
+        var cb = document.querySelector('#emitir-tbody input[value="' + id + '"]');
+        if (cb && !cb.disabled) cb.checked = true;
+      }});
+    }} catch(e) {{}}
+    sessionStorage.removeItem('emitir_checked');
+  }}
+  updateBatchBtn();
+}})();
 </script>"""
         self._respond_html(_base_layout(content, "emitir", user))
 
@@ -1893,6 +1962,57 @@ function cargarEmitir() {{
         now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         db.mark_order_emitted(order_id, now_str)
         self._redirect(f"/emitir?msg=Orden+{order_id}+marcada+como+emitida")
+
+    def _handle_emitir_batch(self):
+        """POST /emitir/batch — genera PDF combinado para múltiples órdenes seleccionadas."""
+        user = self._require_login()
+        if not user:
+            return
+        multi_data = _parse_form_multi(self)
+        order_ids_raw = multi_data.get("order_ids", [])
+        order_ids = []
+        for x in order_ids_raw:
+            x = x.strip()
+            if x.isdigit():
+                order_ids.append(int(x))
+
+        if not order_ids:
+            return self._redirect("/emitir?msg=No+se+seleccionaron+ordenes")
+
+        db = new_db()
+        now_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        orders_details = []
+        for oid in order_ids:
+            details = db.get_order_details(oid)
+            if details:
+                orders_details.append((oid, details))
+
+        if not orders_details:
+            return self._redirect("/emitir?msg=No+se+encontraron+ordenes+validas")
+
+        try:
+            pdf_bytes = generate_batch_pdf(
+                [d for _, d in orders_details], emitted_at=now_str
+            )
+        except Exception as e:
+            print(f"[BATCH PDF] ERROR: {e}")
+            content = _alert(f"Error al generar PDF lote: {html.escape(str(e))}", "error")
+            return self._respond_html(_base_layout(content, "emitir", user))
+
+        # Mark as emitted only those not already emitted
+        marked = 0
+        for oid, details in orders_details:
+            if not details.get("order", {}).get("emitted"):
+                try:
+                    db.mark_order_emitted(oid, now_str)
+                    marked += 1
+                except Exception:
+                    pass
+
+        print(f"[BATCH PDF] {len(orders_details)} ordenes, {marked} marcadas como emitidas")
+        date_tag = now_str[:10]
+        self._respond_pdf(pdf_bytes, f"lote_{date_tag}_{len(orders_details)}ordenes.pdf")
 
     def _handle_emitir_exportar_csv(self):
         import csv, io
