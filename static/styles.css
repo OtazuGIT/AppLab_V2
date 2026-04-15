@@ -386,6 +386,18 @@ body {
   color: #fff;
 }
 
+/* ── Order status badges ── */
+.badge-warning  { background: #e67e22; color: #fff; }
+.badge-info     { background: #2980b9; color: #fff; }
+.badge-success  { background: #27ae60; color: #fff; }
+.badge-primary  { background: #1a5276; color: #fff; }
+.badge-danger   { background: #c0392b; color: #fff; }
+
+/* alert types */
+.alert { padding: 8px 16px; font-size: 0.88rem; margin-bottom: 0; }
+.alert-danger { background: #fdecea; color: #922b21; border-left: 4px solid #c0392b; }
+.alert-info   { background: #eaf4fc; color: #1a5276; border-left: 4px solid #2980b9; }
+
 /* ── Data table ── */
 .table-wrapper {
   overflow-x: auto;

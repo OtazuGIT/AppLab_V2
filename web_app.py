@@ -662,6 +662,8 @@ class WebHandler(BaseHTTPRequestHandler):
             return self._handle_resultados_save(int(parts[1]))
         if parts[0] == "resultados" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "eliminar":
             return self._handle_resultados_eliminar(int(parts[1]))
+        if parts[0] == "resultados" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "rechazar":
+            return self._handle_resultados_rechazar(int(parts[1]))
         if parts[0] == "emitir" and len(parts) == 3 and parts[1].isdigit() and parts[2] == "marcar":
             return self._handle_emitir_marcar(int(parts[1]))
         if parts[0] == "configuracion":
@@ -1230,15 +1232,23 @@ toggleHoy();
     # ===========================================================
     def _resultados_order_options(self, pending, selected_id=None):
         """Build <option> list for the pending orders dropdown."""
-        opts = '<option value="">— Seleccione una orden pendiente —</option>'
+        _STATUS_TAGS = {
+            "pendiente": "●",
+            "parcial":   "◑",
+            "completo":  "◉",
+            "rechazado": "✕",
+        }
+        opts = '<option value="">— Seleccione una orden —</option>'
         for row in pending:
-            oid, first_name, last_name, date, sample_date, doc_type, doc_number = row
+            oid, first_name, last_name, date, sample_date, doc_type, doc_number = row[:7]
+            order_status = row[7] if len(row) > 7 else "pendiente"
             p_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
             p_doc  = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
             d_disp = (date or "")[:10]
-            label  = f"#{oid} — {p_name} ({p_doc}) [{d_disp}]"
+            tag    = _STATUS_TAGS.get(order_status, "")
+            label  = f"{tag} #{oid} — {p_name} ({p_doc}) [{d_disp}]"
             sel    = " selected" if oid == selected_id else ""
-            opts  += f'<option value="{oid}"{sel}>{html.escape(label)}</option>'
+            opts  += f'<option value="{oid}"{sel} data-status="{order_status}">{html.escape(label)}</option>'
         return opts
 
     def _resultados_topbar_js(self):
@@ -1336,12 +1346,31 @@ function eliminarOrden() {
         results = order_details.get("results", [])
         pending_fields = sum(1 for r in results if not r[1])
 
+        # ── Estado actual de la orden ──
+        status_row = db.cur.execute(
+            "SELECT COALESCE(status,'pendiente'), emitted_at, COALESCE(rejected_reason,'') FROM orders WHERE id=?",
+            (order_id,)
+        ).fetchone()
+        order_status   = status_row[0] if status_row else "pendiente"
+        is_emitido     = (order_status == "emitido") or bool(status_row and status_row[1])
+        rejected_reason = status_row[2] if status_row else ""
+
         pending = db.get_pending_orders()
         options_html = self._resultados_order_options(pending, selected_id=order_id)
         pending_count = len(pending)
 
         form_html = _build_result_form_html(order_id, order_details)
         alert_html = _alert(message, message_kind) if message else ""
+
+        _STATUS_COLORS = {
+            "pendiente": "badge-warning",
+            "parcial":   "badge-info",
+            "completo":  "badge-success",
+            "emitido":   "badge-primary",
+            "rechazado": "badge-danger",
+        }
+        status_badge_cls = _STATUS_COLORS.get(order_status, "badge-warning")
+        status_badge = f'<span class="badge {status_badge_cls}">{order_status.upper()}</span>'
 
         pending_badge = (
             f'<span class="badge badge-warning">{pending_fields} sin resultado</span>'
@@ -1370,27 +1399,63 @@ function eliminarOrden() {
       <span><strong>Paciente:</strong> {html.escape(patient_name)}</span>
       <span><strong>Doc:</strong> {html.escape(doc)}</span>
       <span><strong>Fecha:</strong> {html.escape(date_disp)}</span>
+      {status_badge}
       {pending_badge}
     </div>
   </div>
+  {'<div class="alert alert-danger" style="margin:0 0 0 0;border-radius:0;"><strong>MUESTRA RECHAZADA</strong> — ' + html.escape(rejected_reason) + '</div>' if order_status == 'rechazado' and rejected_reason else ''}
+  {'<div class="alert alert-info" style="margin:0;border-radius:0;"><strong>Resultados ya emitidos.</strong> Solo lectura — no se puede modificar.</div>' if is_emitido else ''}
   <form id="result-form" method="post" action="/resultados/{order_id}"
-        style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;"
-        onsubmit="clearDraft()">
+        style="display:flex; flex-direction:column; flex:1; min-height:0; overflow:hidden;">
     <div class="module-body" style="padding-right:4px;">
       {form_html}
     </div>
-    <div class="module-footer" style="display:flex; gap:10px; align-items:center;">
-      <button type="submit" class="btn btn-primary">Guardar Resultados</button>
+    <div class="module-footer" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      {'<button type="button" class="btn btn-primary" onclick="handleFormSubmit()">Guardar Resultados</button>' if not is_emitido else ''}
+      {'<button type="button" class="btn btn-danger btn-sm" onclick="showRejectModal()">Rechazar muestra</button>' if not is_emitido else ''}
       <a href="/resultados" class="btn btn-secondary">Cancelar</a>
+      <span style="flex:1"></span>
       <span id="draft-saved" style="font-size:0.8rem;color:var(--muted);display:none">Borrador guardado</span>
     </div>
   </form>
 </div>
+
+<!-- Modal: campos vacíos -->
+<div id="modal-empty-fields" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;padding:24px;max-width:500px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,.25);">
+    <h3 style="margin:0 0 10px;color:#333;font-size:1.1rem">Campos sin valor</h3>
+    <p style="color:#555;margin:0 0 10px">Los siguientes campos están vacíos:</p>
+    <ul id="empty-fields-list" style="max-height:180px;overflow-y:auto;color:#444;font-size:0.85rem;padding-left:20px;margin:0 0 14px;"></ul>
+    <p style="color:#555;margin:0 0 18px">¿Desea guardar de todos modos?</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-empty-fields').style.display='none'">Cancelar</button>
+      <button class="btn btn-primary" onclick="forceSubmit()">Sí, guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: rechazar muestra -->
+<div id="modal-rechazar" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:9000;align-items:center;justify-content:center;">
+  <div style="background:#fff;border-radius:12px;padding:24px;max-width:460px;width:92%;box-shadow:0 8px 32px rgba(0,0,0,.25);">
+    <h3 style="margin:0 0 10px;color:#c0392b;font-size:1.1rem">Rechazar muestra</h3>
+    <p style="color:#555;margin:0 0 10px">Ingrese el motivo de rechazo:</p>
+    <input type="text" id="reject-reason-input" class="form-input" style="width:100%;box-sizing:border-box;margin-bottom:8px"
+           placeholder="Ej: muestra hemolizada, volumen insuficiente, mal rotulada...">
+    <p style="color:#888;font-size:0.8rem;margin:0 0 16px">Ejemplos: muestra coagulada · cantidad insuficiente · mal rotulada · hemolizada · contenedor roto</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button class="btn btn-secondary" onclick="document.getElementById('modal-rechazar').style.display='none'">Cancelar</button>
+      <button class="btn btn-danger" onclick="confirmReject()">Confirmar rechazo</button>
+    </div>
+  </div>
+</div>
+
 {self._resultados_topbar_js()}
 <script>
 var _formDirty = false;
+var _isEmitido = {'true' if is_emitido else 'false'};
 var _DRAFT_KEY = 'resultados_draft_{order_id}';
-function markFormDirty() {{ _formDirty = true; saveDraft(); }}
+
+function markFormDirty() {{ if (!_isEmitido) {{ _formDirty = true; saveDraft(); }} }}
 function saveDraft() {{
   var form = document.getElementById('result-form');
   if (!form) return;
@@ -1406,6 +1471,7 @@ function clearDraft() {{
   _formDirty = false;
 }}
 function restoreDraft() {{
+  if (_isEmitido) return;
   var raw;
   try {{ raw = localStorage.getItem(_DRAFT_KEY); }} catch(e) {{ return; }}
   if (!raw) return;
@@ -1421,7 +1487,6 @@ function restoreDraft() {{
       else {{ el.value = obj[k]; }}
     }});
   }});
-  // Re-sync dipstick buttons
   form.querySelectorAll('.dipstick-opts').forEach(function(cont) {{
     var inp = cont.querySelector('input[type=hidden]');
     if (!inp) return;
@@ -1430,8 +1495,82 @@ function restoreDraft() {{
       b.classList.toggle('dip-active', b.dataset.val === val);
     }});
   }});
-  console.log('Borrador restaurado para orden {order_id}');
 }}
+
+/* ── Submit con verificación de campos vacíos ── */
+function handleFormSubmit() {{
+  if (_isEmitido) return;
+  var form = document.getElementById('result-form');
+  var emptyLabels = [];
+  form.querySelectorAll('.test-fieldset').forEach(function(block) {{
+    var statusSel = block.querySelector('[name$="_sample_status"]');
+    if (statusSel && statusSel.value === 'pendiente') return;
+    block.querySelectorAll('.rg-row').forEach(function(row) {{
+      if (row.classList.contains('rg-bool-row')) {{
+        if (!row.querySelector('input[type=radio]:checked')) {{
+          var lbl = row.querySelector('.rg-label');
+          if (lbl) emptyLabels.push(lbl.textContent.replace(/\\(.*\\)/g,'').trim());
+        }}
+        return;
+      }}
+      var inp = row.querySelector('.rg-input');
+      if (inp && !inp.value.trim()) {{
+        var lbl = row.querySelector('.rg-label');
+        if (lbl) emptyLabels.push(lbl.textContent.replace(/\\(.*\\)/g,'').trim());
+      }}
+    }});
+    block.querySelectorAll('.rg-textarea').forEach(function(ta) {{
+      if (!ta.value.trim()) {{
+        var pr = ta.closest('.rg-textarea-row');
+        var lbl = pr ? pr.querySelector('.rg-label') : null;
+        if (lbl) emptyLabels.push(lbl.textContent.replace(/\\(.*\\)/g,'').trim());
+      }}
+    }});
+  }});
+  if (emptyLabels.length === 0) {{
+    clearDraft();
+    form.submit();
+    return;
+  }}
+  var ul = document.getElementById('empty-fields-list');
+  ul.innerHTML = emptyLabels.slice(0,30).map(function(f){{
+    return '<li>' + f.replace(/[<>&"]/g,'') + '</li>';
+  }}).join('');
+  if (emptyLabels.length > 30) ul.innerHTML += '<li>... y ' + (emptyLabels.length-30) + ' más</li>';
+  document.getElementById('modal-empty-fields').style.display = 'flex';
+}}
+
+function forceSubmit() {{
+  document.getElementById('modal-empty-fields').style.display = 'none';
+  clearDraft();
+  document.getElementById('result-form').submit();
+}}
+
+/* ── Rechazar muestra ── */
+function showRejectModal() {{
+  document.getElementById('modal-rechazar').style.display = 'flex';
+  setTimeout(function(){{ document.getElementById('reject-reason-input').focus(); }}, 100);
+}}
+function confirmReject() {{
+  var reason = (document.getElementById('reject-reason-input').value || '').trim();
+  if (!reason) {{ alert('Debe ingresar el motivo de rechazo.'); return; }}
+  fetch('/resultados/{order_id}/rechazar', {{
+    method: 'POST',
+    headers: {{'Content-Type':'application/x-www-form-urlencoded'}},
+    body: 'reason=' + encodeURIComponent(reason)
+  }}).then(function(r) {{
+    if (r.ok) {{ window.location.href = '/resultados/{order_id}'; }}
+    else {{ alert('Error al rechazar la orden.'); }}
+  }});
+}}
+
+/* ── Readonly si emitido ── */
+if (_isEmitido) {{
+  document.querySelectorAll('#result-form input, #result-form textarea, #result-form select').forEach(function(el) {{
+    el.disabled = true;
+  }});
+}}
+
 window.addEventListener('DOMContentLoaded', restoreDraft);
 document.addEventListener('change', function(e) {{
   if (e.target.closest('#result-form')) markFormDirty();
@@ -1458,6 +1597,26 @@ window.addEventListener('beforeunload', function(e) {{
         except Exception as e:
             self.send_error(500, str(e))
 
+    def _handle_resultados_rechazar(self, order_id: int):
+        """POST /resultados/{id}/rechazar — marca la orden como rechazada."""
+        user = self._require_login()
+        if not user:
+            return
+        multi_data = _parse_form_multi(self)
+        data = {k: (v[0] if v else "") for k, v in multi_data.items()}
+        reason = data.get("reason", "").strip()
+        if not reason:
+            self.send_error(400, "Motivo de rechazo requerido")
+            return
+        db = new_db()
+        try:
+            db.reject_order(order_id, reason)
+            print(f"[RECHAZAR] orden={order_id} motivo={reason!r}")
+            self.send_response(200)
+            self.end_headers()
+        except Exception as e:
+            self.send_error(500, str(e))
+
     def _handle_resultados_save(self, order_id: int):
         user = self._require_login()
         if not user:
@@ -1466,28 +1625,42 @@ window.addEventListener('beforeunload', function(e) {{
         data = {k: (v[0] if v else "") for k, v in multi_data.items()}
 
         total_tests = int(data.get("total_tests", 0))
+        print(f"[SAVE] orden={order_id} total_tests={total_tests} "
+              f"campos={[k for k in data if k.startswith('test_')][:8]}")
+
         results_dict = _parse_results_from_form(data, multi_data, total_tests)
+        print(f"[SAVE] tests parseados={list(results_dict.keys())}")
 
         if not results_dict:
+            print(f"[SAVE] WARN: results_dict vacío para orden {order_id}")
             return self._handle_resultados_form_get(
-                order_id, message="No se recibieron datos.", message_kind="error"
+                order_id, message="No se recibieron datos del formulario.", message_kind="error"
             )
 
         db = new_db()
         try:
-            completed = db.save_results(order_id, results_dict)
+            order_status = db.save_results(order_id, results_dict)
+            print(f"[SAVE] OK orden={order_id} status={order_status}")
         except Exception as e:
+            print(f"[SAVE] ERROR orden={order_id}: {e}")
             return self._handle_resultados_form_get(
                 order_id, message=f"Error al guardar: {e}", message_kind="error"
             )
 
-        if completed:
-            self._redirect(f"/emitir?msg=Orden+{order_id}+completada")
+        _msgs = {
+            "completo":  ("Orden completa. Lista para emitir.", "success"),
+            "parcial":   ("Resultados guardados. La orden tiene pruebas pendientes.", "info"),
+            "pendiente": ("Datos guardados. Complete los resultados.", "info"),
+            "emitido":   ("Esta orden ya fue emitida.", "warning"),
+            "rechazado": ("Orden marcada como rechazada.", "warning"),
+        }
+        msg, kind = _msgs.get(order_status, ("Guardado.", "success"))
+
+        if order_status == "completo":
+            self._redirect(f"/emitir?msg=Orden+{order_id}+lista+para+emitir")
         else:
             return self._handle_resultados_form_get(
-                order_id,
-                message="Resultados guardados. La orden aún tiene pruebas pendientes.",
-                message_kind="info"
+                order_id, message=msg, message_kind=kind
             )
 
     # ===========================================================
