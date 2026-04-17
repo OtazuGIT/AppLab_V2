@@ -2348,16 +2348,19 @@ function confirmBatch() {{
                  p_preg, p_gest_wk, p_edd,
                  o_age, o_obs, o_req, o_ins, o_fua, o_emitted, o_emitted_at,
                  ot_ss, ot_si, ot_obs_val, ot_pending, ot_id_val,
-                 ot_del, ot_del_reason) = r
+                 ot_del, ot_del_reason, o_diag) = r
                 if o_id not in orders_map:
                     orders_map[o_id] = {
                         "date": _fmt_date(o_date),
                         "sample": _fmt_date(o_sample),
                         "emitted": o_emitted,
+                        "emitted_at": o_emitted_at,
                         "requested_by": o_req or "—",
                         "fua": o_fua or "—",
                         "insurance": o_ins or "—",
                         "age": o_age,
+                        "observations": o_obs or "",
+                        "diagnosis": o_diag or "",
                         "tests": []
                     }
                 if not ot_del:
@@ -2403,12 +2406,25 @@ function confirmBatch() {{
             sel_order_info = orders_map.get(int(sel_order)) if sel_order and sel_order.isdigit() and int(sel_order) in orders_map else None
             if patient_info:
                 def _r2(label, val):
-                    return f'<tr><td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px;">{label}</td><td style="font-size:0.83rem; padding:3px 6px;">{html.escape(str(val))}</td></tr>'
+                    return f'<tr><td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px; vertical-align:top;">{label}</td><td style="font-size:0.83rem; padding:3px 6px; word-break:break-word;">{html.escape(str(val))}</td></tr>'
                 order_rows = ""
                 if sel_order_info:
                     fua_val = sel_order_info['fua'] if sel_order_info['fua'] != '—' else ''
+                    # Age for this specific order
+                    age_val = sel_order_info.get('age')
+                    if age_val is not None:
+                        age_display = f"{int(age_val)} años"
+                    else:
+                        age_display = "—"
+                    # Emitido timestamp formatted
+                    em_at = sel_order_info.get('emitted_at') or ""
+                    em_display = "No emitida"
+                    if sel_order_info.get('emitted'):
+                        em_display = f"Sí — {_fmt_date(em_at)}"
+                        if len(str(em_at)) > 10:
+                            em_display += f" {str(em_at)[11:16]}"
                     fua_row = f"""<tr>
-  <td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px;">FUA</td>
+  <td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px; vertical-align:top;">FUA</td>
   <td style="font-size:0.83rem; padding:3px 6px;">
     <form method="POST" action="/analisis/fua" style="display:flex; align-items:center; gap:4px; margin:0;">
       <input type="hidden" name="order_id" value="{sel_order}">
@@ -2422,11 +2438,19 @@ function confirmBatch() {{
   </td>
 </tr>"""
                     order_rows = f"""
-<tr><td colspan="2" style="background:#eef2f8; font-size:0.73rem; font-weight:700; text-transform:uppercase; color:var(--muted); padding:4px 6px;">Datos de la orden</td></tr>
+<tr><td colspan="2" style="background:#fff3cd; border-left:3px solid #ffc107; font-size:0.73rem; font-weight:700; text-transform:uppercase; color:#856404; padding:5px 6px;">Datos de la orden #{sel_order}</td></tr>
+{_r2("F. orden", sel_order_info['date'] or '—')}
 {_r2("F. muestra", sel_order_info['sample'] or '—')}
+{_r2("Edad en la orden", age_display)}
 {_r2("Médico solicitante", sel_order_info['requested_by'])}
 {_r2("Seguro", sel_order_info['insurance'])}
-{fua_row}"""
+{fua_row}
+{_r2("Diagnóstico", sel_order_info.get('diagnosis') or '—')}
+{_r2("Observaciones", sel_order_info.get('observations') or '—')}
+{_r2("Emitida", em_display)}"""
+                else:
+                    order_rows = f"""
+<tr><td colspan="2" style="background:#f8f9fa; border-left:3px solid #dee2e6; font-size:0.73rem; font-weight:600; color:var(--muted); padding:8px 6px; text-align:center; font-style:italic;">← Seleccione una orden de la lista para ver sus datos</td></tr>"""
                 pat_html = f"""
 <table style="width:100%; border-collapse:collapse;">
   <tr><td colspan="2" style="background:#eef2f8; font-size:0.73rem; font-weight:700; text-transform:uppercase; color:var(--muted); padding:4px 6px;">Datos del paciente</td></tr>
@@ -2439,7 +2463,7 @@ function confirmBatch() {{
   {_r2("Talla", f"{patient_info['height']} cm" if patient_info['height'] else '—')}
   {_r2("Peso", f"{patient_info['weight']} kg" if patient_info['weight'] else '—')}
   {_r2("Presión", patient_info['bp'])}
-  {_r2("Gestante", patient_info['gestante'])}
+  {_r2("Gestante (actual)", patient_info['gestante'])}
   {order_rows}
 </table>"""
             else:

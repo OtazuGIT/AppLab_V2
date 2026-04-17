@@ -1166,7 +1166,7 @@ class LabDB:
                    p.is_pregnant, p.gestational_age_weeks, p.expected_delivery_date,
                    o.age_years, o.observations, o.requested_by, o.insurance_type, o.fua_number, o.emitted, o.emitted_at,
                    ot.sample_status, ot.sample_issue, ot.observation, ot.pending_since, ot.id,
-                   ot.deleted, ot.deleted_reason
+                   ot.deleted, ot.deleted_reason, o.diagnosis
             FROM orders o
             JOIN patients p ON o.patient_id = p.id
             JOIN order_tests ot ON ot.order_id = o.id
