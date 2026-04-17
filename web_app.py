@@ -850,6 +850,19 @@ class WebHandler(BaseHTTPRequestHandler):
         gest_display = "block" if p.get("is_pregnant") else "none"
         today_str = datetime.date.today().isoformat()
 
+        # Historial link — visible solo si el paciente ya fue encontrado (tiene id)
+        historial_link_html = ""
+        if p.get("id") and p.get("doc_number"):
+            p_name_disp = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
+            historial_link_html = f"""
+<div style="margin:4px 0 8px 0; padding:6px 10px; background:#e7f3ff; border-left:3px solid var(--primary); border-radius:3px; font-size:0.85rem;">
+  <a href="/analisis?tab=historial&doc={html.escape(p.get('doc_number'))}" target="_blank"
+     style="color:var(--primary); font-weight:600; text-decoration:none;"
+     title="Abrir historial del paciente en una nueva pestaña">
+    📋 Ver historial del paciente: <u>{html.escape(p_name_disp or p.get('doc_number'))}</u> →
+  </a>
+</div>"""
+
         alert_html = _alert(message, message_kind) if message else ""
 
         content = f"""
@@ -878,20 +891,19 @@ class WebHandler(BaseHTTPRequestHandler):
         <div class="form-group-compact" style="flex:1;">
           <label>&nbsp;</label>
           <input id="in_doc_number" type="text" class="form-input-compact"
-                 value="{pv('doc_number')}" placeholder="N° documento — doble clic para ver historial"
-                 title="Doble clic aqui para ver el historial del paciente"
-                 onchange="document.getElementById('hid_doc_number').value=this.value"
-                 ondblclick="verHistorial()">
+                 value="{pv('doc_number')}" placeholder="N° documento"
+                 onchange="document.getElementById('hid_doc_number').value=this.value">
         </div>
         <div style="padding-bottom:2px;">
           <button type="button" class="btn btn-secondary btn-sm" onclick="buscarPaciente()">Buscar</button>
         </div>
         <div style="padding-bottom:2px;">
           <button type="button" class="btn btn-secondary btn-sm"
-                  title="Ver historial de ordenes del paciente"
+                  title="Abre el historial del paciente (segun el documento ingresado)"
                   onclick="verHistorial()">Ver Historial</button>
         </div>
       </div>
+      {historial_link_html}
 
       <!-- Procedencia -->
       <div class="form-row-compact">
