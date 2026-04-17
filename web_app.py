@@ -2313,10 +2313,28 @@ function confirmBatch() {{
                     pass
                 p_name = f"{p_last or ''} {p_first or ''}".strip() or "—"
                 p_doc  = f"{p_doc_type or ''} {p_doc_num or ''}".strip()
+                # Link al historial del paciente (por numero de documento)
+                if p_doc_num:
+                    hist_href = f"/analisis?tab=historial&doc={html.escape(p_doc_num)}"
+                    doc_cell = (
+                        f'<a href="{hist_href}" target="_blank" '
+                        f'title="Ver historial del paciente en nueva pestaña" '
+                        f'style="color:var(--primary); font-weight:600; text-decoration:none;">'
+                        f'{html.escape(p_doc)}</a>'
+                    )
+                    name_cell = (
+                        f'<a href="{hist_href}" target="_blank" '
+                        f'title="Ver historial del paciente en nueva pestaña" '
+                        f'style="color:inherit; text-decoration:none;">'
+                        f'{html.escape(p_name)}</a>'
+                    )
+                else:
+                    doc_cell = html.escape(p_doc)
+                    name_cell = html.escape(p_name)
                 trows += f"""<tr>
   <td>{_fmt_date(o_date)}</td>
-  <td>{html.escape(p_name)}</td>
-  <td>{html.escape(p_doc)}</td>
+  <td>{name_cell}</td>
+  <td>{doc_cell}</td>
   <td>{html.escape(t_name or "")}</td>
   <td style="max-width:280px; word-break:break-word;">{html.escape(str(disp))}</td>
 </tr>"""
