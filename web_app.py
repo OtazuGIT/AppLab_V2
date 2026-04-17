@@ -878,11 +878,18 @@ class WebHandler(BaseHTTPRequestHandler):
         <div class="form-group-compact" style="flex:1;">
           <label>&nbsp;</label>
           <input id="in_doc_number" type="text" class="form-input-compact"
-                 value="{pv('doc_number')}" placeholder="N° documento"
-                 onchange="document.getElementById('hid_doc_number').value=this.value">
+                 value="{pv('doc_number')}" placeholder="N° documento — doble clic para ver historial"
+                 title="Doble clic aqui para ver el historial del paciente"
+                 onchange="document.getElementById('hid_doc_number').value=this.value"
+                 ondblclick="verHistorial()">
         </div>
         <div style="padding-bottom:2px;">
           <button type="button" class="btn btn-secondary btn-sm" onclick="buscarPaciente()">Buscar</button>
+        </div>
+        <div style="padding-bottom:2px;">
+          <button type="button" class="btn btn-secondary btn-sm"
+                  title="Ver historial de ordenes del paciente"
+                  onclick="verHistorial()">Ver Historial</button>
         </div>
       </div>
 
@@ -1088,6 +1095,13 @@ function buscarPaciente(){{
   var i1=document.createElement('input');i1.type='hidden';i1.name='doc_type';i1.value=dt;
   var i2=document.createElement('input');i2.type='hidden';i2.name='doc_number';i2.value=dn;
   f.appendChild(i1);f.appendChild(i2);document.body.appendChild(f);f.submit();
+}}
+
+function verHistorial(){{
+  var dn=document.getElementById('in_doc_number').value.trim();
+  if(!dn){{alert('Ingrese el numero de documento para ver su historial');return;}}
+  // Abre en una nueva pestaña para no perder el registro en curso
+  window.open('/analisis?tab=historial&doc=' + encodeURIComponent(dn), '_blank');
 }}
 
 function toggleProcOtro(){{
@@ -2338,9 +2352,10 @@ function confirmBatch() {{
                 except Exception as e:
                     error_msg = str(e)
 
-            # Group by order_id
-            orders_map = {}   # {order_id: {info, tests}}
-            patient_info = {}
+            # Group by order_id — each order stores its own patient snapshot
+            # (pueden haber varios pacientes distintos con el mismo apellido)
+            orders_map = {}   # {order_id: {info, tests, patient}}
+            first_patient_info = {}
             for r in history_rows:
                 (o_id, o_date, o_sample, t_id, t_name, ot_result, t_cat,
                  p_first, p_last, p_doc_type, p_doc_num,
@@ -2350,6 +2365,20 @@ function confirmBatch() {{
                  ot_ss, ot_si, ot_obs_val, ot_pending, ot_id_val,
                  ot_del, ot_del_reason, o_diag) = r
                 if o_id not in orders_map:
+                    gest_str = "Sí"
+                    if p_preg and p_gest_wk:
+                        gest_str = f"Sí ({p_gest_wk} sem)"
+                    elif not p_preg:
+                        gest_str = "No"
+                    row_patient = {
+                        "name": f"{p_last or ''} {p_first or ''}".strip(),
+                        "doc": f"{p_doc_type or ''} {p_doc_num or ''}".strip(),
+                        "doc_number": p_doc_num or "",
+                        "sex": p_sex or "—", "birth": _fmt_date(p_birth),
+                        "hcl": p_hcl or "—", "origin": p_origin or "—",
+                        "height": p_height, "weight": p_weight, "bp": p_bp or "—",
+                        "gestante": gest_str,
+                    }
                     orders_map[o_id] = {
                         "date": _fmt_date(o_date),
                         "sample": _fmt_date(o_sample),
@@ -2361,26 +2390,18 @@ function confirmBatch() {{
                         "age": o_age,
                         "observations": o_obs or "",
                         "diagnosis": o_diag or "",
+                        "patient": row_patient,
                         "tests": []
                     }
+                    if not first_patient_info:
+                        first_patient_info = row_patient
                 if not ot_del:
                     orders_map[o_id]["tests"].append((t_name, t_cat, ot_result, ot_ss))
-                if not patient_info:
-                    gest_str = "Sí"
-                    if p_preg and p_gest_wk:
-                        gest_str = f"Sí ({p_gest_wk} sem)"
-                    elif not p_preg:
-                        gest_str = "No"
-                    patient_info = {
-                        "name": f"{p_last or ''} {p_first or ''}".strip(),
-                        "doc": f"{p_doc_type or ''} {p_doc_num or ''}".strip(),
-                        "sex": p_sex or "—", "birth": _fmt_date(p_birth),
-                        "hcl": p_hcl or "—", "origin": p_origin or "—",
-                        "height": p_height, "weight": p_weight, "bp": p_bp or "—",
-                        "gestante": gest_str,
-                    }
 
             # Left column: order list
+            # Detect if search matches multiple distinct patients (show names in list)
+            distinct_patients = {oinfo['patient']['doc'] for oinfo in orders_map.values()}
+            multi_patient = len(distinct_patients) > 1
             order_list_html = ""
             if orders_map:
                 for oid, oinfo in orders_map.items():
@@ -2389,11 +2410,16 @@ function confirmBatch() {{
                     sel_style = "background:#eef2f8; font-weight:700;" if is_sel else ""
                     href = f"/analisis?tab=historial&doc={html.escape(doc_q)}&apellido={html.escape(apellido_q)}&order_id={oid}"
                     n_tests = len(oinfo['tests'])
+                    # Show patient name if multiple patients match the search
+                    patient_line = ""
+                    if multi_patient:
+                        patient_line = f'<div style="font-size:0.75rem; color:#444; font-weight:500;">{html.escape(oinfo["patient"]["name"])}</div>'
                     order_list_html += f"""
 <div style="padding:6px 8px; border-bottom:1px solid var(--border); {sel_style}">
   <a href="{href}" style="text-decoration:none; display:block; color:inherit;">
     <div style="font-size:0.78rem; color:var(--muted);">{oinfo['date']}{em_tag}</div>
     <div style="font-weight:600; color:var(--primary);">Orden #{oid}</div>
+    {patient_line}
     <div style="font-size:0.75rem; color:var(--muted);">{n_tests} prueba(s)</div>
   </a>
 </div>"""
@@ -2404,6 +2430,12 @@ function confirmBatch() {{
             pat_html = ""
             # Per-order data (shown in center column when an order is selected)
             sel_order_info = orders_map.get(int(sel_order)) if sel_order and sel_order.isdigit() and int(sel_order) in orders_map else None
+            # Use the patient data of the selected order (so the correct patient
+            # is shown when search matches multiple patients with same last name).
+            if sel_order_info and sel_order_info.get("patient"):
+                patient_info = sel_order_info["patient"]
+            else:
+                patient_info = first_patient_info
             if patient_info:
                 def _r2(label, val):
                     return f'<tr><td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px; vertical-align:top;">{label}</td><td style="font-size:0.83rem; padding:3px 6px; word-break:break-word;">{html.escape(str(val))}</td></tr>'
