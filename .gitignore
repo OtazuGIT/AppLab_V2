@@ -1,0 +1,38 @@
+# Bases de datos (cada PC tiene la suya)
+*.sqlite
+*.sqlite3
+*.db
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+
+# Editores / IDE
+.vscode/
+.idea/
+*.swp
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Archivos de parche / respaldos
+*.patch
+
+# PDFs generados por la app (cada PC los genera localmente)
+documentos/
+*.pdf
+
+# Claude Code metadata
+.claude/
+
+# Archivos del sistema
+.DS_Store
+Thumbs.db

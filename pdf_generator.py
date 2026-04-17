@@ -853,80 +853,524 @@ def generate_batch_pdf(orders_details_list: list, emitted_at: str) -> bytes:
     return bytes(raw)
 
 
+# ---------------------------------------------------------------------------
+# Registro de pruebas — helpers de sección y formato compacto
+# ---------------------------------------------------------------------------
+
+_SECTION_MAP = {
+    "HEMATOLOGÍA":             "hematologia",
+    "HEMATOLOGIA":             "hematologia",
+    "BIOQUÍMICA":              "bioquimica",
+    "BIOQUIMICA":              "bioquimica",
+    "MICROBIOLOGÍA":           "micro",
+    "MICROBIOLOGIA":           "micro",
+    "PARASITOLOGÍA":           "micro",
+    "PARASITOLOGIA":           "micro",
+    "MICROSCOPÍA":             "micro",
+    "MICROSCOPIA":             "micro",
+    "INMUNOLOGÍA":             "otros",
+    "INMUNOLOGIA":             "otros",
+    "PRUEBAS RÁPIDAS":         "otros",
+    "PRUEBAS RAPIDAS":         "otros",
+    "LABORATORIO REFERENCIAL": "otros",
+    "OTROS":                   "otros",
+    "TOMA DE MUESTRA":         "otros",
+}
+
+# Keys from hemogram structured results to render compactly
+_HEMO_SHORT_KEYS = [
+    ("hematocrito", "Hto"), ("hemoglobina", "Hb"), ("leucocitos", "Leu"),
+    ("eritrocitos", "RBC"), ("plaquetas", "Plaq"),
+    ("segmentados", "Seg"), ("abastonados", "Abast"), ("linfocitos", "Linf"),
+    ("monocitos", "Mon"), ("eosinofilos", "Eos"), ("basofilos", "Bas"),
+]
+
+# Keys to show for urine compact display
+_ORINA_SHORT_KEYS = [
+    ("color", "Color"), ("aspecto", "Asp"), ("densidad", "Dens"),
+    ("ph", "pH"), ("proteinas", "Prot"), ("glucosa", "Glu"),
+    ("sangre", "Sang"), ("nitritos", "Nit"), ("leucocitos_quimico", "Leu"),
+    ("bilirrubina", "Bil"),
+    ("celulas_epiteliales", "Cel.Epi"), ("leucocitos_campo", "Leu/c"),
+    ("hematies_campo", "Hties/c"), ("cristales", "Crist"),
+    ("cilindros", "Cil"), ("otros_hallazgos", "Otros"),
+]
+
+# Keys for copro compact display
+_COPRO_SHORT_KEYS = [
+    ("consistencia", "Consist"), ("color", "Color"), ("moco", "Moco"),
+    ("leucocitos", "Leu/c"), ("hematies", "Hties/c"),
+    ("parasitos", "Paras"), ("levaduras", "Levad"),
+    ("reaccion_inflamatoria", "Rx.Inf"), ("metodo", "Met"),
+]
+
+
+def _registro_parse_result(raw_result: str) -> str:
+    """Parse a single result (JSON or text) into compact display text."""
+    if not raw_result:
+        return ""
+    try:
+        d = json.loads(raw_result)
+        if isinstance(d, dict) and d.get("type") == "structured":
+            vals = d.get("values", {})
+            return json.dumps(vals)  # will be re-parsed per section
+        elif isinstance(d, dict):
+            v = d.get("value", raw_result)
+            return str(v) if v else ""
+    except Exception:
+        pass
+    return str(raw_result)
+
+
+def _registro_compact_structured(test_name: str, raw_result: str) -> str:
+    """Return compact text for a structured result in the registro."""
+    if not raw_result:
+        return ""
+    try:
+        d = json.loads(raw_result)
+    except Exception:
+        return str(raw_result).strip()
+
+    if isinstance(d, dict) and d.get("type") == "structured":
+        vals = d.get("values", {})
+    elif isinstance(d, dict) and "value" in d:
+        v = d.get("value", "")
+        return str(v) if v else ""
+    elif isinstance(d, dict):
+        vals = d
+    else:
+        return str(raw_result).strip()
+
+    tn = test_name.lower()
+
+    # Hemograma — compact: Hto:42; Hb:14; Leu:7500 ...
+    if "hemograma" in tn or "hemoglobina - hematocrito" in tn:
+        parts = []
+        for key, short in _HEMO_SHORT_KEYS:
+            v = vals.get(key, "")
+            if v not in ("", None):
+                parts.append(f"{short}:{v}")
+        return "; ".join(parts) if parts else "—"
+
+    # Orina
+    if "orina" in tn or "sedimento" in tn:
+        parts = []
+        for key, short in _ORINA_SHORT_KEYS:
+            v = vals.get(key, "")
+            if v not in ("", None):
+                parts.append(f"{short}:{v}")
+        return "; ".join(parts) if parts else "—"
+
+    # Copro
+    if "copro" in tn or "parasitol" in tn:
+        parts = []
+        for key, short in _COPRO_SHORT_KEYS:
+            v = vals.get(key, "")
+            if v not in ("", None):
+                parts.append(f"{short}:{v}")
+        return "; ".join(parts) if parts else "—"
+
+    # VIH/Sífilis combinada
+    if "vih" in tn and "sifilis" in tn:
+        parts = []
+        for key in ("vih", "sifilis"):
+            v = vals.get(key, "")
+            if v not in ("", None):
+                parts.append(f"{key.upper()}:{v}")
+        obs = vals.get("observaciones", "")
+        if obs:
+            parts.append(obs)
+        return "; ".join(parts) if parts else "—"
+
+    # Dengue NS1/IgM/IgG
+    if "dengue" in tn and ("ns1" in tn.lower() or "igm" in tn.lower()):
+        parts = []
+        for key in ("ns1", "igm", "igg"):
+            v = vals.get(key, "")
+            if v not in ("", None):
+                parts.append(f"{key.upper()}:{v}")
+        return "; ".join(parts) if parts else "—"
+
+    # Generic structured: key:value pairs
+    parts = []
+    for k, v in vals.items():
+        if v not in ("", None) and k != "observaciones":
+            parts.append(f"{k}:{v}")
+    obs = vals.get("observaciones", "")
+    if obs:
+        parts.append(obs)
+    return "; ".join(parts) if parts else "—"
+
+
+def _registro_compact_simple(test_name: str, raw_result: str) -> str:
+    """Return compact display for a simple/bool/text result."""
+    if not raw_result:
+        return ""
+    try:
+        d = json.loads(raw_result)
+        if isinstance(d, dict) and d.get("type") == "structured":
+            return _registro_compact_structured(test_name, raw_result)
+        elif isinstance(d, dict):
+            v = d.get("value", "")
+            return str(v) if v else ""
+    except Exception:
+        pass
+    return str(raw_result).strip()
+
+
 def generate_registro_pdf(rows, desde: str, hasta: str) -> bytes:
-    """Genera un PDF con el registro de pruebas para el rango dado.
+    """Genera un PDF con el registro de pruebas agrupado por paciente y
+    4 secciones: Hematología, Bioquímica, Microbiología/Parasitología, Otros.
     rows: output of db.get_results_in_range()
     """
-    pdf = FPDF('L', 'mm', 'A4')   # Landscape for wider table
-    pdf.set_margins(8, 8, 8)
-    pdf.set_auto_page_break(True, margin=10)
+    from collections import OrderedDict
+
+    # -- 1. Group rows by order_id, preserving order -------------------------
+    orders = OrderedDict()
+    for r in rows:
+        oid = r[1]  # order_id
+        if oid not in orders:
+            # Calculate age: prefer age_years, fallback to birth_date
+            age_str = "—"
+            if r[15] is not None:
+                try:
+                    age_str = str(int(float(r[15])))
+                except (TypeError, ValueError):
+                    pass
+            if age_str == "—" and r[9]:
+                # Fallback: calculate from birth_date
+                try:
+                    bd = datetime.datetime.strptime(str(r[9]), "%Y-%m-%d")
+                    order_dt_str = str(r[2] or "")[:10]
+                    try:
+                        ref = datetime.datetime.strptime(order_dt_str, "%Y-%m-%d")
+                    except Exception:
+                        ref = datetime.datetime.now()
+                    days = (ref.date() - bd.date()).days
+                    if days >= 0:
+                        age_str = str(int(days / 365.25))
+                except Exception:
+                    pass
+
+            orders[oid] = {
+                "date":       str(r[2] or "")[:10],
+                "sample_date": str(r[3] or "")[:10],
+                "first":      r[4] or "",
+                "last":       r[5] or "",
+                "doc_type":   r[6] or "",
+                "doc_num":    r[7] or "",
+                "sex":        r[8] or "",
+                "age":        age_str,
+                "hcl":        r[10] or "",
+                "is_pregnant": bool(r[12]),
+                "insurance":  r[17] or "",
+                "fua":        r[18] or "",
+                "tests":      [],
+            }
+        orders[oid]["tests"].append({
+            "name":     r[19] or "",
+            "category": r[20] or "",
+            "result":   r[21] or "",
+            "status":   r[22] or "",
+            "obs":      r[24] or "",
+        })
+
+    # -- 2. Build section texts per order ------------------------------------
+    order_rows = []  # list of dicts ready for rendering
+    for oid, info in orders.items():
+        sections = {"hematologia": [], "bioquimica": [], "micro": [], "otros": []}
+        for t in info["tests"]:
+            sec = _SECTION_MAP.get(t["category"].upper().strip(), "otros")
+            # Build compact text
+            name = t["name"]
+            raw = t["result"]
+            compact = _registro_compact_structured(name, raw) if raw else ""
+            if not compact:
+                compact = _registro_compact_simple(name, raw)
+
+            # Prepend test name for micro/otros so the exam type is clear
+            if sec == "micro":
+                # Short name for known tests
+                short_name = name
+                if "orina" in name.lower():
+                    short_name = "Orina"
+                elif "copro" in name.lower() or "parasitol" in name.lower():
+                    short_name = "Copro"
+                elif "gram" in name.lower():
+                    short_name = "Gram"
+                elif "secrecion vaginal" in name.lower() or "secreción vaginal" in name.lower():
+                    short_name = "Sec.Vag"
+                elif "secrecion" in name.lower() or "secreción" in name.lower():
+                    short_name = "Secreción"
+                elif "urocultivo" in name.lower():
+                    short_name = "Urocult"
+                elif "coprocultivo" in name.lower():
+                    short_name = "Coprocult"
+                elif "helecho" in name.lower():
+                    short_name = "Helecho"
+                elif "reaccion inflamatoria" in name.lower() or "reacción inflamatoria" in name.lower():
+                    short_name = "Rx.Infl"
+                elif "gota gruesa" in name.lower():
+                    short_name = "G.Gruesa"
+                elif "leishmaniasis" in name.lower():
+                    short_name = "Leish"
+                elif "hongos" in name.lower() or "koh" in name.lower():
+                    short_name = "KOH"
+                elif "baciloscop" in name.lower():
+                    short_name = "BK"
+                text = f"{short_name}: {compact}" if compact else short_name
+            elif sec == "otros":
+                short_name = name
+                if "vih" in name.lower() and "sifilis" in name.lower():
+                    short_name = "VIH/Sif"
+                elif "vih" in name.lower():
+                    short_name = "VIH"
+                elif "sifilis" in name.lower() or "sífilis" in name.lower():
+                    short_name = "Sífilis"
+                elif "hepatitis b" in name.lower():
+                    short_name = "HepB"
+                elif "hepatitis a" in name.lower():
+                    short_name = "HepA"
+                elif "dengue" in name.lower():
+                    short_name = "Dengue"
+                elif "covid" in name.lower():
+                    short_name = "Covid"
+                elif "bhcg" in name.lower() or "embarazo" in name.lower():
+                    short_name = "BHCG"
+                elif "psa" in name.lower():
+                    short_name = "PSA"
+                elif "sangre oculta" in name.lower():
+                    short_name = "SOH"
+                elif "helicobacter" in name.lower():
+                    short_name = "H.pylori"
+                elif "rpr" in name.lower() or "reagina" in name.lower():
+                    short_name = "RPR"
+                elif "widal" in name.lower():
+                    short_name = "Widal"
+                elif "grupo" in name.lower() and "rh" in name.lower():
+                    short_name = "Grupo/Rh"
+                elif "pcr" in name.lower() and "latex" in name.lower():
+                    short_name = "PCR-Lat"
+                elif "pcr" in name.lower():
+                    short_name = "PCR"
+                elif "factor reumatoideo" in name.lower():
+                    short_name = "FR"
+                elif "aso" in name.lower():
+                    short_name = "ASO"
+                elif "toma de muestra" in name.lower():
+                    short_name = "T.Mx"
+                    if "leishmaniasis" in name.lower():
+                        short_name = "T.Mx Leish"
+                    elif "dengue" in name.lower():
+                        short_name = "T.Mx Dengue"
+                    elif "covid" in name.lower():
+                        short_name = "T.Mx Covid"
+                    elif "leptospirosis" in name.lower():
+                        short_name = "T.Mx Lepto"
+                text = f"{short_name}: {compact}" if compact else short_name
+            elif sec == "hematologia":
+                # For hemograma, the compact text already has the data
+                tn = name.lower()
+                if "hemograma" in tn:
+                    label = "Hmg.Man" if "manual" in tn else "Hmg.Auto"
+                    text = f"{label}: {compact}" if compact else label
+                else:
+                    text = f"{name}: {compact}" if compact else name
+            else:  # bioquimica
+                text = f"{name}: {compact}" if compact else name
+
+            # Add observation/status notes
+            if t["obs"]:
+                text += f" (Obs: {t['obs']})"
+            status = (t["status"] or "").strip().lower()
+            if status == "pendiente":
+                text += " [Pend.mx]"
+            elif status == "rechazada":
+                text += " [Rechaz.]"
+
+            sections[sec].append(text)
+
+        # Build patient info block (all data in one column)
+        p_name = f"{info['last']} {info['first']}".strip()
+        doc_line = f"{info['doc_type']} {info['doc_num']}".strip()
+        hcl_line = f"HCL: {info['hcl']}" if info['hcl'] else ""
+        sex_label = ""
+        if info.get("sex"):
+            sex_label = "M" if info['sex'].upper().startswith('M') else "F"
+        age_sex = f"Edad: {info['age']}"
+        if sex_label:
+            age_sex += f" / Sexo: {sex_label}"
+        ins_line = info["insurance"] if info["insurance"] else ""
+
+        patient_lines = [p_name, doc_line]
+        if hcl_line:
+            patient_lines.append(hcl_line)
+        patient_lines.append(age_sex)
+        if info.get("is_pregnant"):
+            patient_lines.append("Gestante")
+        if ins_line:
+            patient_lines.append(f"Seg: {ins_line}")
+        patient_text = "\n".join(patient_lines)
+
+        # Date display: include sample_date if different from order date
+        date_display = info["date"]
+        if info.get("sample_date") and info["sample_date"] != info["date"] and info["sample_date"].strip():
+            date_display += f"\nMx: {info['sample_date']}"
+
+        order_rows.append({
+            "date": date_display,
+            "patient": patient_text,
+            "hematologia": "\n".join(sections["hematologia"]),
+            "bioquimica":  "\n".join(sections["bioquimica"]),
+            "micro":       "\n".join(sections["micro"]),
+            "otros":       "\n".join(sections["otros"]),
+        })
+
+    # -- 3. PDF rendering -----------------------------------------------------
+    pdf = FPDF('L', 'mm', 'A4')  # Landscape A4: ~297 x 210 mm
+    pdf.set_margins(5, 6, 5)
+    pdf.set_auto_page_break(True, margin=8)
     pdf.add_page()
 
-    # Header
-    pdf.set_font("Arial", "B", 13)
-    pdf.cell(0, 7, _ensure_latin1(LAB_TITLE), ln=True, align="C")
-    pdf.set_font("Arial", "B", 10)
-    periodo = f"Registro de pruebas: {desde} al {hasta}"
-    pdf.cell(0, 6, _ensure_latin1(periodo), ln=True, align="C")
-    pdf.set_font("Arial", "", 8)
-    generated = f"Generado: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
-    pdf.cell(0, 5, _ensure_latin1(generated), ln=True, align="C")
-    pdf.ln(3)
+    # Column widths — total ~287 mm usable (297 - 10 margins)
+    # Fecha | Datos del paciente | Hematología | Bioquímica | Micro/Parasit | Otros
+    COL_W = [16, 50, 62, 30, 72, 57]
+    HEADERS = [
+        "Fecha",
+        "Datos del paciente",
+        "Hematología",
+        "Bioquímica",
+        "Microbiología y\nParasitología",
+        "Otros exámenes /\nObservaciones",
+    ]
 
-    # Table header  — landscape A4 = 277mm usable
-    COL_W = [20, 60, 30, 12, 50, 105]   # Fecha|Paciente|Documento|Edad|Examen|Resultado
-    HEADERS = ["Fecha", "Paciente", "Documento", "Edad", "Examen", "Resultado"]
-    pdf.set_fill_color(46, 134, 222)
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font("Arial", "B", 7)
-    for h, w in zip(HEADERS, COL_W):
-        pdf.cell(w, 6, _ensure_latin1(h), border=1, align="C", fill=True)
-    pdf.ln()
-    pdf.set_text_color(0, 0, 0)
+    ROW_H = 3.0   # line height for content
+    FONT_SIZE = 5.6
 
-    # Rows
-    fill = False
-    pdf.set_font("Arial", "", 7)
-    for r in rows:
-        o_date   = str(r[2] or "")[:10]
-        p_first  = r[4] or ""
-        p_last   = r[5] or ""
-        p_doc_t  = r[6] or ""
-        p_doc_n  = r[7] or ""
-        o_age    = str(r[15]) if r[15] is not None else "—"
-        t_name   = r[19] or ""
-        ot_res   = r[21] or ""
+    def _draw_header(p):
+        """Draw page title and table header."""
+        p.set_font("Arial", "B", 11)
+        p.cell(0, 6, _ensure_latin1(LAB_TITLE), ln=True, align="C")
+        p.set_font("Arial", "B", 9)
+        periodo = f"Registro de resultados: {_format_date_display(desde)} al {_format_date_display(hasta)}"
+        p.cell(0, 5, _ensure_latin1(periodo), ln=True, align="C")
+        p.set_font("Arial", "", 7)
+        gen_text = f"Generado: {datetime.datetime.now().strftime('%d/%m/%Y %H:%M')}"
+        p.cell(0, 4, _ensure_latin1(gen_text), ln=True, align="C")
+        p.ln(2)
+        # Header row — light gray background, black text (ink-friendly)
+        p.set_fill_color(210, 210, 210)
+        p.set_text_color(0, 0, 0)
+        p.set_font("Arial", "B", 6)
+        hdr_h = 8
+        x0 = p.get_x()
+        y0 = p.get_y()
+        for i, (h, w) in enumerate(zip(HEADERS, COL_W)):
+            x = x0 + sum(COL_W[:i])
+            p.set_xy(x, y0)
+            p.multi_cell(w, hdr_h / max(h.count("\n") + 1, 1), _ensure_latin1(h),
+                         border=1, align="C", fill=True)
+        p.set_xy(x0, y0 + hdr_h)
+        p.set_text_color(0, 0, 0)
 
-        # Parse result
-        disp = ot_res
-        try:
-            d = json.loads(ot_res)
-            if isinstance(d, dict) and d.get("type") == "structured":
-                vals = [(k, v) for k, v in d.get("values", {}).items() if v not in ("", None)]
-                disp = " | ".join(f"{k}: {v}" for k, v in vals) if vals else "—"
-            elif isinstance(d, dict):
-                v = d.get("value", ot_res)
-                disp = str(v) if v else "—"
-        except Exception:
-            pass
+    _draw_header(pdf)
 
-        p_name = f"{p_last} {p_first}".strip()
+    def _text_lines(text, col_w, font_size):
+        """Estimate how many lines a text block will take in a cell."""
+        if not text:
+            return 1
+        char_w = font_size * 0.45  # approx char width at this font size
+        max_chars = max(int(col_w / char_w), 1)
+        lines = 0
+        for line in text.split("\n"):
+            lines += max(1, -(-len(line) // max_chars))  # ceiling division
+        return lines
 
-        row_vals = [o_date, p_name, f"{p_doc_t} {p_doc_n}".strip(), o_age, t_name, disp]
-        pdf.set_fill_color(248, 251, 255) if fill else pdf.set_fill_color(255, 255, 255)
-        # Multi-line cell hack: use the last column as a multi-line cell
-        # Calculate row height by splitting result text
-        result_text = _ensure_latin1(str(disp))
-        for val, w in zip(row_vals[:-1], COL_W[:-1]):
-            pdf.cell(w, 5, _ensure_latin1(str(val))[:30], border="LTB", fill=True)
-        # Last cell (result) — truncate to fit
-        pdf.cell(COL_W[-1], 5, result_text[:80], border="RTB", fill=True)
-        pdf.ln()
-        fill = not fill
+    fill_idx = 0
+    for orow in order_rows:
+        # Calculate row height based on tallest column
+        all_texts = [
+            (orow["date"], COL_W[0]),
+            (orow["patient"], COL_W[1]),
+            (orow["hematologia"], COL_W[2]),
+            (orow["bioquimica"], COL_W[3]),
+            (orow["micro"], COL_W[4]),
+            (orow["otros"], COL_W[5]),
+        ]
+        max_lines = 1
+        for st, cw in all_texts:
+            nl = _text_lines(st, cw, FONT_SIZE)
+            if nl > max_lines:
+                max_lines = nl
 
-    pdf.ln(3)
+        row_height = max_lines * ROW_H + 0.6  # tight fit, minimal padding
+
+        # Page break check
+        if pdf.get_y() + row_height > 200:
+            pdf.add_page()
+            _draw_header(pdf)
+
+        y_start = pdf.get_y()
+        x_start = pdf.get_x()
+
+        # Alternating fill — very light gray, saves ink
+        if fill_idx % 2 == 1:
+            pdf.set_fill_color(240, 240, 240)
+            x_cur = x_start
+            for w in COL_W:
+                pdf.rect(x_cur, y_start, w, row_height, 'F')
+                x_cur += w
+
+        # Draw cell borders (thin lines)
+        pdf.set_draw_color(180, 180, 180)
+        x_cur = x_start
+        for w in COL_W:
+            pdf.rect(x_cur, y_start, w, row_height, 'D')
+            x_cur += w
+        pdf.set_draw_color(0, 0, 0)
+
+        # Render date column
+        pdf.set_font("Arial", "", FONT_SIZE)
+        pdf.set_xy(x_start + 0.5, y_start + 0.3)
+        pdf.multi_cell(COL_W[0] - 1, ROW_H,
+                       _ensure_latin1(_format_date_display(orow["date"])),
+                       border=0, align="L")
+
+        # Render patient column — name in bold, rest normal
+        px = x_start + COL_W[0] + 0.5
+        py = y_start + 0.3
+        p_lines = orow["patient"].split("\n")
+        # First line (name) in bold
+        pdf.set_font("Arial", "B", FONT_SIZE)
+        pdf.set_xy(px, py)
+        pdf.cell(COL_W[1] - 1, ROW_H, _ensure_latin1(p_lines[0] if p_lines else ""),
+                 border=0, align="L")
+        # Remaining lines normal
+        pdf.set_font("Arial", "", FONT_SIZE)
+        for pl in p_lines[1:]:
+            py += ROW_H
+            pdf.set_xy(px, py)
+            pdf.cell(COL_W[1] - 1, ROW_H, _ensure_latin1(pl), border=0, align="L")
+
+        # Render 4 section columns
+        pdf.set_font("Arial", "", FONT_SIZE)
+        sec_texts = [orow["hematologia"], orow["bioquimica"], orow["micro"], orow["otros"]]
+        for si, sec_text in enumerate(sec_texts):
+            col_idx = si + 2
+            cx = x_start + sum(COL_W[:col_idx])
+            pdf.set_xy(cx + 0.5, y_start + 0.3)
+            pdf.multi_cell(COL_W[col_idx] - 1, ROW_H,
+                           _ensure_latin1(sec_text or ""), border=0, align="L")
+
+        pdf.set_y(y_start + row_height)
+        fill_idx += 1
+
+    # Footer
+    pdf.ln(2)
     pdf.set_font("Arial", "I", 7)
-    pdf.cell(0, 4, _ensure_latin1(f"Total: {len(rows)} resultado(s)"), ln=True)
+    total_tests = sum(len(info["tests"]) for info in orders.values())
+    pdf.cell(0, 4, _ensure_latin1(
+        f"Total: {len(orders)} orden(es), {total_tests} examen(es)"), ln=True)
 
     raw = pdf.output(dest='S')
     if isinstance(raw, str):

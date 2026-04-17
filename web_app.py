@@ -67,6 +67,24 @@ def new_db() -> LabDB:
 
 
 # ---------------------------------------------------------------------------
+# Date display helper — DD/MM/YYYY everywhere in the UI
+# ---------------------------------------------------------------------------
+def _fmt_date(value, placeholder="—") -> str:
+    """Convert YYYY-MM-DD (or datetime string) to DD/MM/YYYY for display."""
+    if not value or str(value).strip() in ("", "None"):
+        return placeholder
+    s = str(value).strip()[:10]  # take only date portion
+    # Already DD/MM/YYYY?
+    if len(s) == 10 and s[2] == "/" and s[5] == "/":
+        return s
+    # YYYY-MM-DD → DD/MM/YYYY
+    parts = s.split("-")
+    if len(parts) == 3 and len(parts[0]) == 4:
+        return f"{parts[2]}/{parts[1]}/{parts[0]}"
+    return s
+
+
+# ---------------------------------------------------------------------------
 # Template helpers
 # ---------------------------------------------------------------------------
 def _read_template(name: str) -> str:
@@ -668,6 +686,8 @@ class WebHandler(BaseHTTPRequestHandler):
             return self._handle_emitir_marcar(int(parts[1]))
         if parts[0] == "emitir" and len(parts) == 2 and parts[1] == "batch":
             return self._handle_emitir_batch()
+        if parts[0] == "analisis" and len(parts) == 2 and parts[1] == "fua":
+            return self._handle_analisis_fua_update()
         if parts[0] == "configuracion":
             if len(parts) == 3 and parts[1] == "usuario" and parts[2] == "nuevo":
                 return self._handle_config_nuevo_usuario()
@@ -1079,11 +1099,24 @@ document.getElementById('pregnant_check').addEventListener('change', function(){
   document.getElementById('gest-fields').style.display=this.checked?'flex':'none';
 }});
 
-document.getElementById('birth_date_input').addEventListener('change', function(){{
-  var bd=new Date(this.value);
+function calcAgeFromBirthDate(){{
+  var inp=document.getElementById('birth_date_input');
+  var bd=new Date(inp.value);
   if(isNaN(bd.getTime())) return;
   var age=Math.floor((new Date()-bd)/(365.25*24*3600*1000));
   document.getElementById('age_years_input').value=age;
+}}
+document.getElementById('birth_date_input').addEventListener('change', calcAgeFromBirthDate);
+document.getElementById('birth_date_input').addEventListener('input', calcAgeFromBirthDate);
+document.getElementById('birth_date_input').addEventListener('paste', function(e){{
+  var self=this;
+  setTimeout(function(){{
+    // Normalize pasted date: try DD/MM/YYYY or DD-MM-YYYY -> YYYY-MM-DD
+    var v=self.value.trim();
+    var m=v.match(/^(\\d{{1,2}})[\\/-](\\d{{1,2}})[\\/-](\\d{{4}})$/);
+    if(m) self.value=m[3]+'-'+m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0');
+    calcAgeFromBirthDate();
+  }},50);
 }});
 
 function toggleHoy(){{
@@ -1246,7 +1279,7 @@ toggleHoy();
             order_status = row[7] if len(row) > 7 else "pendiente"
             p_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
             p_doc  = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
-            d_disp = (date or "")[:10]
+            d_disp = _fmt_date(date)
             tag    = _STATUS_TAGS.get(order_status, "")
             label  = f"{tag} #{oid} — {p_name} ({p_doc}) [{d_disp}]"
             sel    = " selected" if oid == selected_id else ""
@@ -1343,7 +1376,7 @@ function eliminarOrden() {
         ord_inf = order_details["order"]
         patient_name = f"{pat.get('first_name','')} {pat.get('last_name','')}".strip()
         doc = f"{pat.get('doc_type','')} {pat.get('doc_number','')}".strip()
-        date_disp = (ord_inf.get("date") or "")[:10]
+        date_disp = _fmt_date(ord_inf.get("date"))
 
         results = order_details.get("results", [])
         pending_fields = sum(1 for r in results if not r[1])
@@ -1699,7 +1732,7 @@ window.addEventListener('beforeunload', function(e) {{
              doc_type, doc_number, emitted, emitted_at, status) = row
             p_name = f"{first_name or ''} {last_name or ''}".strip() or "-"
             p_doc  = f"{doc_type or ''} {doc_number or ''}".strip() or "-"
-            d_disp = (date or "")[:10]
+            d_disp = _fmt_date(date)
             icon   = _STATUS_ICON.get(status, "")
             bcls, blbl = _STATUS_BADGE.get(status, ("badge-warning", status.upper()))
             checked = " checked" if (oid == selected_order_id and not emitted) else ""
@@ -1739,7 +1772,7 @@ window.addEventListener('beforeunload', function(e) {{
                 ord_inf = order_details["order"]
                 p_name = pat.get("name") or f"{pat.get('first_name','')} {pat.get('last_name','')}".strip()
                 p_doc  = f"{pat.get('doc_type','')} {pat.get('doc_number','')}".strip()
-                d_disp = (ord_inf.get("date") or "")[:10]
+                d_disp = _fmt_date(ord_inf.get("date"))
                 ord_status = ord_inf.get("status", "pendiente")
                 bcls, blbl = _STATUS_BADGE.get(ord_status, ("badge-warning", ord_status.upper()))
                 rejected_reason = ord_inf.get("rejected_reason", "")
@@ -1756,7 +1789,7 @@ window.addEventListener('beforeunload', function(e) {{
   <span class="muted">{html.escape(p_doc)}</span>
   <span class="muted">{d_disp}</span>
   <span class="badge {bcls}">{blbl}</span>
-  {'<span class="muted" style="font-size:0.78rem">' + html.escape(emitted_disp[:16]) + '</span>' if emitted_disp else ''}
+  {'<span class="muted" style="font-size:0.78rem">' + html.escape(_fmt_date(emitted_disp) + (" " + str(emitted_disp)[11:16] if len(str(emitted_disp)) > 10 else "")) + '</span>' if emitted_disp else ''}
 </div>"""
                 results = order_details.get("results", [])
                 if results:
@@ -2049,7 +2082,7 @@ function confirmBatch() {{
             except Exception:
                 pass
             writer.writerow([
-                o_id, (o_date or "")[:10], (o_sample or "")[:10],
+                o_id, _fmt_date(o_date), _fmt_date(o_sample),
                 p_last or "", p_first or "",
                 f"{p_doc_type or ''} {p_doc_num or ''}".strip(),
                 p_sex or "", o_age or "",
@@ -2255,7 +2288,7 @@ function confirmBatch() {{
                 p_name = f"{p_last or ''} {p_first or ''}".strip() or "—"
                 p_doc  = f"{p_doc_type or ''} {p_doc_num or ''}".strip()
                 trows += f"""<tr>
-  <td>{(o_date or "")[:10]}</td>
+  <td>{_fmt_date(o_date)}</td>
   <td>{html.escape(p_name)}</td>
   <td>{html.escape(p_doc)}</td>
   <td>{html.escape(t_name or "")}</td>
@@ -2318,8 +2351,8 @@ function confirmBatch() {{
                  ot_del, ot_del_reason) = r
                 if o_id not in orders_map:
                     orders_map[o_id] = {
-                        "date": (o_date or "")[:10],
-                        "sample": (o_sample or "")[:10],
+                        "date": _fmt_date(o_date),
+                        "sample": _fmt_date(o_sample),
                         "emitted": o_emitted,
                         "requested_by": o_req or "—",
                         "fua": o_fua or "—",
@@ -2338,7 +2371,7 @@ function confirmBatch() {{
                     patient_info = {
                         "name": f"{p_last or ''} {p_first or ''}".strip(),
                         "doc": f"{p_doc_type or ''} {p_doc_num or ''}".strip(),
-                        "sex": p_sex or "—", "birth": (p_birth or "")[:10],
+                        "sex": p_sex or "—", "birth": _fmt_date(p_birth),
                         "hcl": p_hcl or "—", "origin": p_origin or "—",
                         "height": p_height, "weight": p_weight, "bp": p_bp or "—",
                         "gestante": gest_str,
@@ -2373,12 +2406,27 @@ function confirmBatch() {{
                     return f'<tr><td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px;">{label}</td><td style="font-size:0.83rem; padding:3px 6px;">{html.escape(str(val))}</td></tr>'
                 order_rows = ""
                 if sel_order_info:
+                    fua_val = sel_order_info['fua'] if sel_order_info['fua'] != '—' else ''
+                    fua_row = f"""<tr>
+  <td class="muted" style="font-size:0.78rem; white-space:nowrap; padding:3px 6px;">FUA</td>
+  <td style="font-size:0.83rem; padding:3px 6px;">
+    <form method="POST" action="/analisis/fua" style="display:flex; align-items:center; gap:4px; margin:0;">
+      <input type="hidden" name="order_id" value="{sel_order}">
+      <input type="hidden" name="doc" value="{html.escape(doc_q)}">
+      <input type="hidden" name="apellido" value="{html.escape(apellido_q)}">
+      <input type="text" name="fua_number" value="{html.escape(fua_val)}"
+             style="width:100px; padding:2px 4px; font-size:0.82rem; border:1px solid var(--border); border-radius:3px;"
+             placeholder="N° FUA">
+      <button type="submit" style="padding:2px 8px; font-size:0.75rem; cursor:pointer; background:var(--primary); color:#fff; border:none; border-radius:3px;">Guardar</button>
+    </form>
+  </td>
+</tr>"""
                     order_rows = f"""
 <tr><td colspan="2" style="background:#eef2f8; font-size:0.73rem; font-weight:700; text-transform:uppercase; color:var(--muted); padding:4px 6px;">Datos de la orden</td></tr>
 {_r2("F. muestra", sel_order_info['sample'] or '—')}
 {_r2("Médico solicitante", sel_order_info['requested_by'])}
 {_r2("Seguro", sel_order_info['insurance'])}
-{_r2("FUA", sel_order_info['fua'])}"""
+{fua_row}"""
                 pat_html = f"""
 <table style="width:100%; border-collapse:collapse;">
   <tr><td colspan="2" style="background:#eef2f8; font-size:0.73rem; font-weight:700; text-transform:uppercase; color:var(--muted); padding:4px 6px;">Datos del paciente</td></tr>
@@ -2499,6 +2547,29 @@ function confirmBatch() {{
   </div>
 </div>"""
         self._respond_html(_base_layout(content, "analisis", user))
+
+    def _handle_analisis_fua_update(self):
+        """POST /analisis/fua — actualiza el FUA de una orden existente."""
+        user = self._require_login()
+        if not user:
+            return
+        data = _parse_form_body(self)
+        order_id = data.get("order_id", "").strip()
+        fua_number = data.get("fua_number", "").strip()
+        doc_q = data.get("doc", "").strip()
+        apellido_q = data.get("apellido", "").strip()
+        if not order_id:
+            self.send_error(400, "Falta order_id")
+            return
+        db = new_db()
+        db.update_order_fua(int(order_id), fua_number)
+        # Redirect back to historial with the same search and selected order
+        qs = f"tab=historial&order_id={order_id}"
+        if doc_q:
+            qs += f"&doc={doc_q}"
+        if apellido_q:
+            qs += f"&apellido={apellido_q}"
+        self._redirect(f"/analisis?{qs}")
 
     def _handle_analisis_registro_pdf(self):
         """Genera PDF de registro de pruebas para un rango de fechas."""

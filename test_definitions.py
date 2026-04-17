@@ -66,9 +66,38 @@ _UROBILINOGENO_OPTS = ["Normal (0.1-1.0 mg/dL)", "2.0 mg/dL", "4.0 mg/dL", "8.0 
 URINE_BASE_FIELDS = [
     {"type": "section", "label": "Examen físico"},
     {"key": "color",   "label": "Color",   "reference": "Amarillo pajizo; RN: incoloro a amarillo claro",
-     "type": "choice", "choices": ["Amarillo pajizo", "Amarillo claro", "Amarillo oscuro", "Anaranjado", "Rojo / hematúrico", "Marrón", "Turbio / lechoso", "Incoloro"]},
+     "type": "choice", "choices": [
+         "Incoloro",
+         "Amarillo pajizo",
+         "Amarillo claro",
+         "Amarillo",
+         "Amarillo oscuro",
+         "Amarillo ámbar",
+         "Amarillo verdoso",
+         "Verdoso",
+         "Verde",
+         "Anaranjado",
+         "Rojo / hematúrico",
+         "Rojizo",
+         "Rosado",
+         "Marrón",
+         "Marrón oscuro / té cargado",
+         "Negruzco",
+         "Turbio / lechoso",
+         "Lechoso / quiloso",
+         "Azulado"
+     ]},
     {"key": "aspecto", "label": "Aspecto", "reference": "Transparente; leve turbidez fisiológica en gestantes",
-     "type": "choice", "choices": ["Transparente", "Ligeramente turbio", "Turbio", "Muy turbio / lechoso"]},
+     "type": "choice", "choices": [
+         "Transparente",
+         "Ligeramente turbio",
+         "Turbio",
+         "Muy turbio / lechoso",
+         "Con sedimento",
+         "Hemático",
+         "Espumoso",
+         "Mucoide"
+     ]},
     {"key": "olor",    "label": "Olor",    "reference": "Aromático suave", "optional": True},
     {"type": "section", "label": "Examen químico (tira reactiva)"},
     {"key": "densidad",          "label": "Densidad",       "reference": "RN: 1.002-1.012 | Niños: 1.005-1.015 | Adultos: 1.005-1.030", "placeholder": "Ej. 1.020"},
@@ -95,8 +124,42 @@ URINE_BASE_FIELDS = [
      "quick_negative": "-"}
 ]
 
-_COPRO_CONSISTENCIA = ["Formada", "Blanda", "Semilíquida", "Líquida", "Mucosa", "Pastosa"]
-_COPRO_COLOR = ["Pardo amarillento", "Amarillo", "Verde", "Negro", "Rojo / sanguinolento", "Blanquecino / acólico"]
+_COPRO_CONSISTENCIA = [
+    "Formada",
+    "Semiformada",
+    "Blanda",
+    "Pastosa",
+    "Semipastosa",
+    "Semilíquida",
+    "Líquida",
+    "Diarreica",
+    "Mucosa",
+    "Mucosanguinolenta",
+    "Dura / caprina",
+    "Grumosa",
+    "Espumosa",
+    "Esteatorreica / grasosa"
+]
+_COPRO_COLOR = [
+    "Pardo amarillento",
+    "Pardo oscuro",
+    "Marrón",
+    "Marrón claro",
+    "Marrón oscuro",
+    "Amarillo",
+    "Amarillo claro",
+    "Amarillo verdoso",
+    "Verde",
+    "Verde oscuro",
+    "Verdoso",
+    "Negro / melénico",
+    "Negro",
+    "Rojo / sanguinolento",
+    "Rojizo",
+    "Blanquecino / acólico",
+    "Grisáceo",
+    "Anaranjado"
+]
 
 COPRO_DIRECT_FIELDS = [
     {"type": "section", "label": "Evaluación macroscópica"},
