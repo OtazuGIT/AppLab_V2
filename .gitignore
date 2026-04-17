@@ -15,6 +15,7 @@ env/
 
 # Editores / IDE
 .vscode/
+.vs/
 .idea/
 *.swp
 
@@ -25,6 +26,16 @@ dist/
 
 # Archivos de parche / respaldos
 *.patch
+*.diff
+
+# Exports / archivos temporales
+registro.csv
+*.bak
+
+# Backup/lock de SQLite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
 
 # PDFs generados por la app (cada PC los genera localmente)
 documentos/

@@ -1,62 +1,64 @@
-# App_lab_clinic
+# Laboratorio P.S. Iñapari — App Web
 
-Aplicación de escritorio en PyQt5 para gestionar resultados y reportes de un laboratorio clínico.
+Aplicación web de gestión de resultados y reportes para un laboratorio clínico de primer nivel.
 
 ## Requisitos
 
-* Python 3.9 o superior.
-* Dependencias listadas en [`requirements.txt`](requirements.txt).
-* (Opcional) PyInstaller para generar ejecutables auto-contenidos.
+- **Python 3.11 o superior** (32-bit o 64-bit según la PC)
+- **Git** (solo si quieres recibir actualizaciones automáticas)
 
-## Configurar el entorno de desarrollo
+## Instalación rápida (PC de usuario final)
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # En Windows: .venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
-python main.py
+### 1. Clonar el repositorio
+
+```cmd
+cd C:\
+git clone https://github.com/OtazuGIT/AppLab_V2.git laboratorio
+cd laboratorio
 ```
 
-La base de datos `lab_db.sqlite` se crea y migra automáticamente al iniciar la aplicación.
+### 2. Iniciar la app
 
-## Crear un instalador/ejecutable con PyInstaller
+Doble clic en **`Iniciar_Laboratorio.bat`**.
 
-1. Activa tu entorno virtual y asegúrate de tener las dependencias instaladas (`pip install -r requirements.txt`).
-2. Ejecuta PyInstaller utilizando el archivo de especificación incluido:
-   ```bash
-   pyinstaller --clean --noconfirm pyinstaller.spec
-   ```
-3. El ejecutable sin consola se generará dentro de `dist/AppLabClinic`. Copia esa carpeta completa a la computadora destino.
-4. En la máquina de destino, ejecuta `AppLabClinic/AppLabClinic.exe` (Windows) o el binario correspondiente según el sistema operativo.
+La primera vez instalará las dependencias automáticamente (fpdf y openpyxl). En los siguientes inicios solo arranca el servidor.
 
-El archivo `pyinstaller.spec` ya incluye los recursos necesarios (`lab_db.sqlite`, `registro.csv` e imágenes). Si agregas nuevos archivos estáticos, actualiza la sección `datas` del spec para que se incluyan en el empaquetado.
+Se abrirá el navegador en **http://localhost:8000**.
 
-## Distribuir con instaladores nativos (opcional)
+### 3. Actualizar la app cuando haya cambios
 
-Para una experiencia más pulida puedes envolver la carpeta `dist/AppLabClinic` con herramientas específicas del sistema operativo:
+Doble clic en **`Actualizar_App.bat`**. Esto descarga los cambios desde GitHub sin tocar tu base de datos local.
 
-* **Windows:** utilizar Inno Setup o NSIS para crear un instalador `.exe` tradicional.
-* **Linux:** generar paquetes `.deb` o `.rpm` a partir de la carpeta de distribución, o crear un AppImage usando `appimagetool`.
-* **macOS:** firmar y empaquetar el contenido en un `.app` utilizando `create-dmg` o `productbuild`.
+## Estructura del proyecto
 
-En todos los casos incluye la carpeta completa generada por PyInstaller para mantener los recursos y la base de datos inicial.
+```
+laboratorio/
+├── web_app.py              # Servidor HTTP + rutas
+├── database.py             # Capa de acceso a SQLite
+├── pdf_generator.py        # Generación de PDF (órdenes, lotes, registro)
+├── test_definitions.py     # Plantillas de exámenes y categorías
+├── templates/              # HTML (login, dashboard)
+├── static/                 # CSS
+├── img/                    # Logo del laboratorio
+├── requirements.txt        # Dependencias Python
+├── Iniciar_Laboratorio.bat # Lanzador de la app
+├── Actualizar_App.bat      # Actualiza desde GitHub
+└── lab_db.sqlite           # Base de datos local (se crea automáticamente)
+```
 
+> La base de datos `lab_db.sqlite` **no se sube a GitHub** — cada PC tiene su propia copia con su data.
 
-## Migración inicial a versión web (HTTP server nativo)
+## Instalación manual (desarrolladores)
 
-Se añadió una primera versión web para usar la app desde Chrome/Edge/Firefox sin depender de PyQt.
-
-### Ejecutar la versión web
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # En Windows: .venv\Scripts\activate
-pip install --upgrade pip
-pip install -r requirements.txt
+```cmd
+python -m pip install -r requirements.txt
 python web_app.py
 ```
 
-Luego abre `http://127.0.0.1:8000` en tu navegador.
+Abrir navegador en http://localhost:8000.
 
-> Esta migración cubre login web y un dashboard inicial con métricas (pacientes, órdenes, órdenes completadas y usuarios). La versión de escritorio (`main.py`) sigue disponible mientras se completa la migración total de módulos.
+## Notas
+
+- Para cerrar la app: cerrar la ventana negra (CMD) que abre el launcher.
+- La app funciona en Windows 7/8/10/11 con Python 3.11+.
+- Compatible con 32-bit y 64-bit.
