@@ -657,8 +657,8 @@ BOOL_TESTS = {
                                          "reference": "No reactivo"},
     "Proteína C reactiva (PCR) - Látex": {"positive_text": "Reactivo", "negative_text": "No reactivo",
                                            "reference": "No reactivo"},
-    "BHCG (Prueba de embarazo en sangre)": {"positive_text": "Positivo", "negative_text": "Negativo",
-                                             "reference": "Negativo (<5 mUI/mL)"},
+    "HCG cualitativo (Prueba de embarazo en sangre)": {"positive_text": "Positivo", "negative_text": "Negativo",
+                                             "reference": "Negativo"},
     "Serología Dengue (referencial)": {"positive_text": "Positivo", "negative_text": "Negativo",
                                         "reference": "Negativo"},
     "Serología Leptospira (referencial)": {"positive_text": "Positivo", "negative_text": "Negativo",
@@ -705,8 +705,8 @@ SAMPLE_TEMPLATES = {
             {"key": "observaciones", "label": "Observaciones", "type": "text_area", "optional": True},
         ]
     },
-    "BHCG (Prueba de embarazo en sangre)": build_bool_observation_template(
-        "Positivo", "Negativo", "Negativo (<5 mUI/mL)")
+    "HCG cualitativo (Prueba de embarazo en sangre)": build_bool_observation_template(
+        "Positivo", "Negativo", "Negativo")
 }
 
 # Agregar SIMPLE_NUMERIC_TESTS al TEST_TEMPLATES
@@ -785,7 +785,7 @@ TEST_TEMPLATES["Hemoglobina - Hematocrito"] = {
 }
 
 RAPID_TEST_NAMES = [
-    "BHCG (Prueba de embarazo en sangre)", "VIH (Prueba rápida)", "Sífilis (Prueba rápida)",
+    "HCG cualitativo (Prueba de embarazo en sangre)", "VIH (Prueba rápida)", "Sífilis (Prueba rápida)",
     "VIH/Sífilis (Prueba combinada)", "Hepatitis A (Prueba rápida)", "Hepatitis B (Prueba rápida)",
     "PSA (Prueba rápida)", "Sangre oculta en heces (Prueba rápida)",
     "Helicobacter pylori (Prueba rápida)", "Covid-19 (Prueba antigénica)",

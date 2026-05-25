@@ -1135,8 +1135,8 @@ def generate_registro_pdf(rows, desde: str, hasta: str) -> bytes:
                     short_name = "Dengue"
                 elif "covid" in name.lower():
                     short_name = "Covid"
-                elif "bhcg" in name.lower() or "embarazo" in name.lower():
-                    short_name = "BHCG"
+                elif "bhcg" in name.lower() or "hcg" in name.lower() or "embarazo" in name.lower():
+                    short_name = "HCG"
                 elif "psa" in name.lower():
                     short_name = "PSA"
                 elif "sangre oculta" in name.lower():

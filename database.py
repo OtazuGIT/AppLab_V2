@@ -220,7 +220,7 @@ class LabDB:
                     "PSA (ELISA)"
                 ],
                 "PRUEBAS RÁPIDAS": [
-                    "BHCG (Prueba de embarazo en sangre)", "VIH (Prueba rápida)", "Sífilis (Prueba rápida)",
+                    "HCG cualitativo (Prueba de embarazo en sangre)", "VIH (Prueba rápida)", "Sífilis (Prueba rápida)",
                     "VIH/Sífilis (Prueba combinada)", "Hepatitis A (Prueba rápida)", "Hepatitis B (Prueba rápida)",
                     "PSA (Prueba rápida)", "Sangre oculta en heces (Prueba rápida)", "Helicobacter pylori (Prueba rápida)",
                     "Covid-19 (Prueba antigénica)", "Covid-19 (Prueba serológica)", "Dengue NS1/IgM/IgG (Prueba rápida)"
@@ -258,7 +258,11 @@ class LabDB:
         # Ajustes posteriores para bases de datos existentes
         self._ensure_test_renamed(
             "HCG (Prueba de embarazo en orina)",
-            "BHCG (Prueba de embarazo en sangre)"
+            "HCG cualitativo (Prueba de embarazo en sangre)"
+        )
+        self._ensure_test_renamed(
+            "BHCG (Prueba de embarazo en sangre)",
+            "HCG cualitativo (Prueba de embarazo en sangre)"
         )
         self._ensure_test_renamed(
             "Cultivo de secreción vaginal",
